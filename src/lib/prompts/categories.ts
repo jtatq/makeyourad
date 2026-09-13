@@ -16,12 +16,12 @@ const shopCta = "Stop in or order ahead. See you soon.";
 export const CATEGORY_PACKS: Record<string, CategoryPack> = {
   hvac: {
     visualWorld:
-      "Residential AC condensers, attics, thermostats, clean service vans, technicians in branded shirts, suburban homes, hot-day exteriors.",
+      "Talking-head in the driveway: technician in a branded shirt next to a clean service van, suburban house, palm or shade trees, hot-day exteriors. Real condensers and thermostats only as cutaways.",
     proof: "Licensed, local, and used to the heat. Show real equipment and real houses.",
     cta: "Call for same-day service. Cooling and heating, done right.",
     hookLine: {
-      energetic: "When the AC dies, you shouldn't have to wait.",
-      trustworthy: "If your AC is out, we'll say when we can be there — and be there.",
+      energetic: "Hi folks — when the AC dies, you shouldn't have to wait.",
+      trustworthy: "Hi folks, this is your local crew. If the AC is out, we'll say when we can be there — and be there.",
       premium: "Quiet rooms. Steady air. A system that just works.",
       friendly: "Too hot in the house? We can fix that today.",
     },

@@ -52,7 +52,7 @@ export function recipeSlots(opts: {
     id: "hook",
     label: "Hook",
     duration: "3–5s",
-    role: "Open on the problem or promise. No logo yet.",
+    role: "Talking-head open: owner or tech on camera in front of the truck, van, or house, speaking straight to the viewer.",
   };
   const mascot: RecipeSlot = {
     id: "mascot",
@@ -77,7 +77,7 @@ export function recipeSlots(opts: {
     return [
       hook,
       ...(opts.mascot ? [mascot] : []),
-      body(1, opts.mascot ? "8–10s" : "10–12s", "One scene from the customer's photos and direction."),
+      body(1, opts.mascot ? "8–10s" : "10–12s", "They keep talking — city, proof, what they do. Stay on the person or cut to work from their photos."),
       end,
     ];
   }
@@ -85,9 +85,9 @@ export function recipeSlots(opts: {
   return [
     hook,
     ...(opts.mascot ? [mascot] : []),
-    body(1, "8–10s", "Beat 1 from the category pack, using customer photos."),
-    body(2, "8–10s", "Beat 2 — the work itself."),
-    body(3, "8–10s", "Beat 3 — local proof, then hand to the end card."),
+    body(1, "8–10s", "Talking-head continues: name the problem, then the promise."),
+    body(2, "8–10s", "The work itself — still the same person, or a cut to their photos of the job."),
+    body(3, "8–10s", "Local proof, city, then hand to the end card."),
     end,
   ];
 }

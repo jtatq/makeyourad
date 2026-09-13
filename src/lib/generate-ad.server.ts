@@ -229,16 +229,24 @@ function stillPrompt(packet: GenerationPacket, slot: GenerationPacket["recipe"][
       `On-screen type, clean and readable: ${i.businessName}. ${i.city}, ${i.state}. ${i.phone}. CTA: ${site?.cta || "Call today"}.`,
     );
   }
-  if (slot.id === "hook") lines.push("Open on the problem or the promise. No logo yet.");
+  if (slot.id === "hook") {
+    lines.push(
+      "Talking-head: a real owner or technician from the reference photos stands in the driveway or at the storefront, facing camera, mid-speech. Van, truck, or house from the uploads sits behind them. Match their face, shirt, and wrap — do not invent lettering.",
+    );
+  }
   if (slot.id === "mascot" && i.mascotDescription) lines.push(`Mascot: ${i.mascotDescription}`);
   return lines.filter(Boolean).join("\n");
 }
 
 function motionPrompt(slot: GenerationPacket["recipe"]["slots"][number], seconds: number, tone: string) {
+  const talking =
+    slot.id === "hook" || slot.id.startsWith("body")
+      ? "The person talks to camera with natural hand gestures. Mouth moves in speech. Do not freeze the last seconds."
+      : "Slow, confident camera. Keep type readable if present.";
   return [
     `Animate this advertisement frame as a ${seconds}-second ${slot.label.toLowerCase()} clip.`,
     slot.role,
-    `Tone: ${tone}. Slow, confident camera. Keep type readable if present.`,
+    `Tone: ${tone}. ${talking}`,
     `Photoreal, no morphing logos, no extra text, no watermarks.`,
     `Hard stop at ${seconds} seconds.`,
   ].join(" ");
@@ -266,7 +274,11 @@ function imagineStillPrompt(
       `Put clean readable type on screen: ${i.businessName}. ${i.city}, ${i.state}. ${i.phone}. ${site?.cta || "Call today"}.`,
     );
   }
-  if (slot.id === "hook") parts.push("Open on the problem or the promise. No logo yet.");
+  if (slot.id === "hook") {
+    parts.push(
+      "Talking-head still: owner or tech from the reference photos, facing camera, mid-speech, branded van or house behind them. Match face, shirt, and wrap exactly. Do not invent lettering on the van or shirt.",
+    );
+  }
   if (slot.id === "mascot" && i.mascotDescription) parts.push(`Mascot: ${i.mascotDescription}`);
   parts.push("Use the real business. No celebrity, no watermark, no UI chrome, no agency slogan.");
   return parts.join(" ");
@@ -274,11 +286,15 @@ function imagineStillPrompt(
 
 function imagineMotionPrompt(slot: GenerationPacket["recipe"]["slots"][number], seconds: number, tone: Tone) {
   const pack = TONE_PACKS[tone];
+  const talking =
+    slot.id === "hook" || slot.id.startsWith("body")
+      ? "The person talks to camera with natural hand gestures and a slight weight shift. Mouth moves in speech. Do not freeze the last seconds."
+      : "Slow, confident camera, subject stays recognizable, type stays readable.";
   return [
     `Animate this advertisement frame as a ${seconds}-second ${slot.label.toLowerCase()} clip.`,
     slot.role,
     pack.picture,
-    "Slow, confident camera, subject stays recognizable, type stays readable.",
+    talking,
     "Photoreal, no morphing logos, no extra text, no watermarks.",
     `Hard stop at ${seconds} seconds.`,
   ].join(" ");

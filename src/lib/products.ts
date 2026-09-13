@@ -40,7 +40,7 @@ export const PRODUCTS: Record<ProductId, Product> = {
     priceCents: 10000,
     durationSeconds: 40,
     kind: "video",
-    blurb: "Hook, three scenes from your photos, and an end card with your name, city, and number.",
+    blurb: "Talking-head hook, scenes from your photos, and an end card with your name, city, and number.",
     includes: ["40-second MP4", "9:16, 1:1, and 16:9", "End card with your info", "Delivered in 24 hours"],
   },
   "video-20": {
@@ -50,7 +50,7 @@ export const PRODUCTS: Record<ProductId, Product> = {
     priceCents: 5000,
     durationSeconds: 20,
     kind: "video",
-    blurb: "A tight hook, one scene from your photos, and a clear end card.",
+    blurb: "A talking-head hook, one scene from your photos, and a clear end card.",
     includes: ["20-second MP4", "9:16, 1:1, and 16:9", "End card with your info", "Delivered in 24 hours"],
   },
   static: {
