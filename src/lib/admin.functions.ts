@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { getRequest, setResponseHeader } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { listOutbound, sendSlaDigest } from "./email.server";
+import { dbSource } from "./db";
 import { aiAvailable, loadGeneration, tickGeneration } from "./generate-ad.server";
 import {
   attachFiles,
@@ -29,6 +30,7 @@ import {
   signedFileUrl,
   tokenMatches,
 } from "./operator-auth.server";
+import { isWorkspacePreview } from "./env.server";
 
 function requireAdmin() {
   const request = getRequest();
@@ -53,7 +55,7 @@ export const adminSession = createServerFn({ method: "GET" }).handler(async () =
   const request = getRequest();
   return {
     ok: readOperatorCookie(request) || previewAdminOpen(),
-    previewHint: isPreviewOperatorSecret() ? "makeyourad-operator" : null,
+    previewHint: isWorkspacePreview() && isPreviewOperatorSecret() ? "makeyourad-operator" : null,
     aiAvailable: aiAvailable(),
   };
 });
@@ -62,7 +64,13 @@ export const adminDashboard = createServerFn({ method: "GET" }).handler(async ()
   requireAdmin();
   await seedDemoIfEmpty();
   const [orders, sla, emails] = await Promise.all([listOrders(), slaSnapshot(), listOutbound(12)]);
-  return { orders, sla, emails };
+  return {
+    orders,
+    sla,
+    emails,
+    durable: dbSource === "neon",
+    aiAvailable: aiAvailable(),
+  };
 });
 
 export const adminOrder = createServerFn({ method: "GET" })

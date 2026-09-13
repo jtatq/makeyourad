@@ -53,6 +53,16 @@ function QueuePage() {
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+        {!dashboard.durable ? (
+          <div className="mb-4 rounded-md bg-danger px-4 py-3 text-sm text-fg">
+            Orders are not saving yet. In Vercel go to Storage, create Neon Postgres, connect it to this project, then Redeploy.
+          </div>
+        ) : null}
+        {!dashboard.aiAvailable ? (
+          <div className="mb-4 rounded-md bg-warn px-4 py-3 text-sm text-fg">
+            Generate is off on this host. Add XAI_API_KEY in Environment Variables and Redeploy.
+          </div>
+        ) : null}
         {sla.critical_20h.length > 0 ? (
           <div className="mb-4 rounded-md bg-danger px-4 py-3 text-sm text-fg">
             {sla.critical_20h.length} order{sla.critical_20h.length === 1 ? "" : "s"} past 20 hours.

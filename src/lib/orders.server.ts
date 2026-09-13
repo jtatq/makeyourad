@@ -578,6 +578,7 @@ export async function joinWaitlist(opts: {
 }
 
 export async function seedDemoIfEmpty() {
+  if (typeof process !== "undefined" && process.env.VERCEL) return;
   const sql = await getSql();
   const rows = await sql.query<{ n: number }>(`select count(*)::int as n from orders`);
   if ((rows[0]?.n ?? 0) > 0) return;

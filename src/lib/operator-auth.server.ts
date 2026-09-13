@@ -16,6 +16,7 @@ export function isPreviewOperatorSecret(): boolean {
 }
 
 export function previewAdminOpen(): boolean {
+  if (env("VERCEL")) return false;
   return isWorkspacePreview() && isPreviewOperatorSecret();
 }
 
@@ -71,12 +72,17 @@ export function readOperatorCookie(request: Request): boolean {
   return sessionCookieIsValid(cookies[COOKIE]);
 }
 
+function cookieAttrs(): string {
+  const secure = env("VERCEL") || env("GROK_PROJECT_ID") ? "; Secure" : "";
+  return `Path=/; HttpOnly; SameSite=Lax${secure}`;
+}
+
 export function operatorCookieHeader(): string {
-  return `${COOKIE}=${encodeURIComponent(sessionCookieValue())}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 14}`;
+  return `${COOKIE}=${encodeURIComponent(sessionCookieValue())}; ${cookieAttrs()}; Max-Age=${60 * 60 * 24 * 14}`;
 }
 
 export function clearOperatorCookieHeader(): string {
-  return `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+  return `${COOKIE}=; ${cookieAttrs()}; Max-Age=0`;
 }
 
 export function bearerFrom(request: Request): string | null {
