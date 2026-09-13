@@ -104,6 +104,8 @@ function Detail({
   const uploads = assets.filter((a) => a.kind === "upload" || a.kind === "logo");
   const deliveries = assets.filter((a) => a.kind === "delivery");
   const generating = busy === "generate" || generation?.status === "running";
+  const hasOutput = Boolean(generation?.slots.some((s) => s.stillUrl || s.videoUrl));
+  const stuckWaiting = generation?.status === "running" && !hasOutput;
 
 
   return (
@@ -208,35 +210,47 @@ function Detail({
             {generation?.error ? <p className="mt-2 text-sm text-danger">{generation.error}</p> : null}
             {!canGenerate ? (
               <p className="mt-2 text-sm text-danger">
-                Generate is off on this copy.
+                Generate is off until XAI_API_KEY is set in Vercel → Environment Variables, then Redeploy.
+              </p>
+            ) : stuckWaiting ? (
+              <p className="mt-2 text-sm text-warn">
+                Last run is waiting with no frames yet. Restart it below.
               </p>
             ) : null}
             {error && busy === "generate" ? <p className="mt-2 text-sm text-danger">{error}</p> : null}
             <div className="mt-4 flex flex-col gap-2">
               <Button
                 className="w-full"
-                disabled={!canGenerate || busy !== null || generating}
+                disabled={!canGenerate || busy !== null}
                 onClick={() =>
                   void run("generate", () =>
                     adminGenerate({
                       data: {
                         id: order.id,
                         action: "start",
-                        force: generation?.status === "done" || generation?.status === "error",
+                        force:
+                          generating ||
+                          generation?.status === "done" ||
+                          generation?.status === "error" ||
+                          stuckWaiting,
                       },
                     }),
                   )
                 }
               >
-                {generating
-                  ? engine === "imagine"
-                    ? "Grok is drawing…"
-                    : "Generating…"
-                  : generation?.status === "done"
-                    ? "Generate again"
-                    : generation?.status === "error"
-                      ? "Retry generate"
-                      : "Generate ad"}
+                {busy === "generate"
+                  ? "Starting…"
+                  : stuckWaiting
+                    ? "Restart generate"
+                    : generating
+                      ? engine === "imagine"
+                        ? "Grok is drawing…"
+                        : "Generating…"
+                      : generation?.status === "done"
+                        ? "Generate again"
+                        : generation?.status === "error"
+                          ? "Retry generate"
+                          : "Generate ad"}
               </Button>
             </div>
             {generation ? (

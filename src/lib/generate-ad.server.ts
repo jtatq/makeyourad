@@ -75,13 +75,12 @@ function apiKey(): string | null {
   return process.env.XAI_API_KEY?.trim() || null;
 }
 
-/** Prefer the xAI REST API when a key is present so Generate works on Vercel. */
+/** Use the xAI REST API when a key is present so Generate works on Vercel. */
 export function generationEngine(): GenEngine {
+  if (!apiKey()) return "imagine";
   const forced = env("GENERATION_ENGINE");
   if (forced === "imagine") return "imagine";
-  if (forced === "xai") return "xai";
-  if (apiKey()) return "xai";
-  return "imagine";
+  return "xai";
 }
 
 export function aiAvailable(): boolean {
