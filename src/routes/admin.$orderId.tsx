@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { hoursLabel, StatusPill } from "@/components/admin/status-pill";
 import { Mark } from "@/components/layout/site-chrome";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import {
   adminClaim,
   adminDeliver,
   adminFlag,
+  adminGenerate,
   adminOrder,
   adminQc,
   adminRefund,
@@ -55,7 +56,7 @@ function OrderAdminPage() {
 
 function Detail({ detail }: { detail: Awaited<ReturnType<typeof adminOrder>> }) {
   const router = useRouter();
-  const { order, events, assets, packet } = detail;
+  const { order, events, assets, packet, generation } = detail;
   const [filename, setFilename] = useState("ad-9x16.mp4");
   const [url, setUrl] = useState("/examples/hvac.jpg");
   const [watched, setWatched] = useState(false);
@@ -78,8 +79,19 @@ function Detail({ detail }: { detail: Awaited<ReturnType<typeof adminOrder>> }) 
     }
   }
 
+  useEffect(() => {
+    if (generation?.status !== "running") return;
+    const t = window.setTimeout(() => {
+      void run("generate", () => adminGenerate({ data: { id: order.id, action: "tick" } }));
+    }, 1200);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generation?.status, generation?.updatedAt, order.id]);
+
   const uploads = assets.filter((a) => a.kind === "upload" || a.kind === "logo");
   const deliveries = assets.filter((a) => a.kind === "delivery");
+  const generating = busy === "generate" || generation?.status === "running";
+
 
   return (
     <div className="min-h-dvh pb-16">
@@ -168,6 +180,62 @@ function Detail({ detail }: { detail: Awaited<ReturnType<typeof adminOrder>> }) 
 
         <aside className="flex flex-col gap-4">
           <section className="panel p-5">
+            <h2 className="font-display text-xl">Generate</h2>
+            <p className="mt-1 text-sm text-muted">
+              Builds each recipe slot from the packet. Stills first, then motion. Uses the customer’s photos when we have them.
+            </p>
+            {generation?.error ? <p className="mt-2 text-sm text-danger">{generation.error}</p> : null}
+            <div className="mt-4 flex flex-col gap-2">
+              <Button
+                disabled={busy !== null || generating}
+                onClick={() =>
+                  void run("generate", () =>
+                    adminGenerate({
+                      data: {
+                        id: order.id,
+                        action: "start",
+                        force: generation?.status === "done" || generation?.status === "error",
+                      },
+                    }),
+                  )
+                }
+              >
+                {generating
+                  ? "Generating…"
+                  : generation?.status === "done"
+                    ? "Generate again"
+                    : generation?.status === "error"
+                      ? "Retry generate"
+                      : "Generate ad"}
+              </Button>
+            </div>
+            {generation ? (
+              <ol className="mt-4 space-y-3">
+                {generation.slots.map((s) => (
+                  <li key={s.id} className="text-sm">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="font-medium">{s.label}</span>
+                      <span className="text-xs uppercase tracking-wider text-muted">
+                        {s.status === "video" ? "animating" : s.status}
+                        {s.duration ? ` · ${s.duration}s` : ""}
+                      </span>
+                    </div>
+                    {s.error ? <p className="mt-1 text-xs text-danger">{s.error}</p> : null}
+                    {(s.videoUrl || s.stillUrl) && (
+                      <div className="mt-2 overflow-hidden rounded-md bg-elevated">
+                        {s.videoUrl ? (
+                          <video src={s.videoUrl} className="aspect-[9/16] w-full bg-bg" controls playsInline />
+                        ) : (
+                          <img src={s.stillUrl} alt="" className="aspect-[9/16] w-full object-cover" />
+                        )}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            ) : null}
+          </section>
+          <section className="panel p-5">
             <h2 className="font-display text-xl">Actions</h2>
             {error ? <p className="mt-2 text-sm text-danger">{error}</p> : null}
             <div className="mt-4 flex flex-col gap-2">
@@ -194,9 +262,14 @@ function Detail({ detail }: { detail: Awaited<ReturnType<typeof adminOrder>> }) 
                 </Button>
               </div>
               {deliveries.length > 0 ? (
-                <ul className="text-xs text-muted">
+                <ul className="space-y-2 text-xs text-muted">
                   {deliveries.map((d) => (
-                    <li key={d.id}>{d.filename}</li>
+                    <li key={d.id}>
+                      {d.preview_url && d.mime.startsWith("video/") ? (
+                        <video src={d.preview_url} className="mb-1 aspect-[9/16] w-full rounded-md bg-bg" controls playsInline />
+                      ) : null}
+                      {d.filename}
+                    </li>
                   ))}
                 </ul>
               ) : null}

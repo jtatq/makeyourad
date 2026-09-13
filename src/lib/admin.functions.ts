@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { getRequest, setResponseHeader } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { listOutbound, sendSlaDigest } from "./email.server";
+import { loadGeneration, tickGeneration } from "./generate-ad.server";
 import {
   attachFiles,
   claimOrder,
@@ -71,14 +72,16 @@ export const adminOrder = createServerFn({ method: "GET" })
     if (!order) throw new Error("Order not found");
     const request = getRequest();
     const origin = requestOrigin(request);
-    const [events, assets, packet] = await Promise.all([
+    const [events, assets, packet, generation] = await Promise.all([
       listEvents(data.id),
       listAssets({ orderId: data.id }),
       packetFor(data.id, request),
+      loadGeneration(data.id),
     ]);
     return {
       order,
       events,
+      generation,
       assets: assets.map((a) => ({
         id: a.id,
         kind: a.kind,
@@ -86,9 +89,10 @@ export const adminOrder = createServerFn({ method: "GET" })
         mime: a.mime,
         hasData: Boolean(a.data_url),
         external_url: a.external_url,
-        preview_url: a.mime.startsWith("image/")
-          ? a.external_url || signedFileUrl(origin, a.id, 1)
-          : null,
+        preview_url:
+          a.mime.startsWith("image/") || a.mime.startsWith("video/")
+            ? a.external_url || signedFileUrl(origin, a.id, 1)
+            : null,
       })),
       packet,
     };
@@ -99,6 +103,19 @@ export const adminClaim = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     requireAdmin();
     return claimOrder(data.id, "admin");
+  });
+
+export const adminGenerate = createServerFn({ method: "POST" })
+  .validator(
+    z.object({
+      id: z.string(),
+      action: z.enum(["start", "tick"]).default("tick"),
+      force: z.boolean().optional(),
+    }),
+  )
+  .handler(async ({ data }) => {
+    requireAdmin();
+    return tickGeneration(data.id, { action: data.action, force: data.force });
   });
 
 export const adminAttach = createServerFn({ method: "POST" })

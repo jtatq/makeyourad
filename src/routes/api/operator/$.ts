@@ -16,6 +16,7 @@ import {
   seedDemoIfEmpty,
   slaSnapshot,
 } from "@/lib/orders.server";
+import { tickGeneration } from "@/lib/generate-ad.server";
 import { requestIsOperator, requestOrigin, unauthorizedJson } from "@/lib/operator-auth.server";
 
 export const Route = createFileRoute("/api/operator/$")({
@@ -88,6 +89,13 @@ async function handle(request: Request, splat: string, method: "GET" | "POST") {
       }
       const body = await readJson(request);
       if (action === "claim") return Response.json({ order: await claimOrder(id) });
+      if (action === "generate") {
+        const result = await tickGeneration(id, {
+          action: body.action === "tick" ? "tick" : "start",
+          force: Boolean(body.force),
+        });
+        return Response.json(result);
+      }
       if (action === "attach") {
         const files = Array.isArray(body.files)
           ? body.files

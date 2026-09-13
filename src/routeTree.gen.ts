@@ -14,6 +14,7 @@ import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AvatarRouteImport } from './routes/avatar'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as TermsRouteImport } from './routes/terms'
+import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminOrderIdRouteImport } from './routes/admin.$orderId'
 import { Route as OrderProductRouteImport } from './routes/order.$product'
 import { Route as OrderSuccessRouteImport } from './routes/order.success'
@@ -46,6 +47,11 @@ const TermsRoute = TermsRouteImport.update({
   id: '/terms',
   path: '/terms',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AdminIndexRoute = AdminIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AdminRoute,
 } as any)
 const AdminOrderIdRoute = AdminOrderIdRouteImport.update({
   id: '/$orderId',
@@ -93,13 +99,13 @@ export interface FileRoutesByFullPath {
   '/order/$product': typeof OrderProductRoute
   '/order/success': typeof OrderSuccessRoute
   '/pay/$checkoutId': typeof PayCheckoutIdRoute
+  '/admin/': typeof AdminIndexRoute
   '/api/files/$id': typeof ApiFilesIdRoute
   '/api/operator/$': typeof ApiOperatorSplatRoute
   '/api/stripe/webhook': typeof ApiStripeWebhookRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/admin': typeof AdminRouteWithChildren
   '/avatar': typeof AvatarRoute
   '/privacy': typeof PrivacyRoute
   '/terms': typeof TermsRoute
@@ -107,6 +113,7 @@ export interface FileRoutesByTo {
   '/order/$product': typeof OrderProductRoute
   '/order/success': typeof OrderSuccessRoute
   '/pay/$checkoutId': typeof PayCheckoutIdRoute
+  '/admin': typeof AdminIndexRoute
   '/api/files/$id': typeof ApiFilesIdRoute
   '/api/operator/$': typeof ApiOperatorSplatRoute
   '/api/stripe/webhook': typeof ApiStripeWebhookRoute
@@ -122,6 +129,7 @@ export interface FileRoutesById {
   '/order/$product': typeof OrderProductRoute
   '/order/success': typeof OrderSuccessRoute
   '/pay/$checkoutId': typeof PayCheckoutIdRoute
+  '/admin/': typeof AdminIndexRoute
   '/api/files/$id': typeof ApiFilesIdRoute
   '/api/operator/$': typeof ApiOperatorSplatRoute
   '/api/stripe/webhook': typeof ApiStripeWebhookRoute
@@ -138,13 +146,13 @@ export interface FileRouteTypes {
     | '/order/$product'
     | '/order/success'
     | '/pay/$checkoutId'
+    | '/admin/'
     | '/api/files/$id'
     | '/api/operator/$'
     | '/api/stripe/webhook'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/admin'
     | '/avatar'
     | '/privacy'
     | '/terms'
@@ -152,6 +160,7 @@ export interface FileRouteTypes {
     | '/order/$product'
     | '/order/success'
     | '/pay/$checkoutId'
+    | '/admin'
     | '/api/files/$id'
     | '/api/operator/$'
     | '/api/stripe/webhook'
@@ -166,6 +175,7 @@ export interface FileRouteTypes {
     | '/order/$product'
     | '/order/success'
     | '/pay/$checkoutId'
+    | '/admin/'
     | '/api/files/$id'
     | '/api/operator/$'
     | '/api/stripe/webhook'
@@ -222,6 +232,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TermsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/': {
+      id: '/admin/'
+      path: '/'
+      fullPath: '/admin/'
+      preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/$orderId': {
       id: '/admin/$orderId'
       path: '/$orderId'
@@ -276,10 +293,12 @@ declare module '@tanstack/react-router' {
 
 interface AdminRouteChildren {
   AdminOrderIdRoute: typeof AdminOrderIdRoute
+  AdminIndexRoute: typeof AdminIndexRoute
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
   AdminOrderIdRoute: AdminOrderIdRoute,
+  AdminIndexRoute: AdminIndexRoute,
 }
 
 const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)

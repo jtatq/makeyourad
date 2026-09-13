@@ -59,6 +59,9 @@ export function SiteFooter() {
           <Link to="/privacy" className="hover:text-fg">
             Privacy
           </Link>
+          <Link to="/admin" className="hover:text-fg">
+            Operator
+          </Link>
           <a href="mailto:hello@makeyourad.com" className="hover:text-fg">
             hello@makeyourad.com
           </a>

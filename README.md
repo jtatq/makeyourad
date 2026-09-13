@@ -2,7 +2,7 @@
 
 Self-serve storefront: a local business buys an ad, pays once, and gets files by email within 24 hours.
 
-v1 is a storefront plus an operator queue. Generation happens outside this app, from a structured packet.
+v1 is a storefront plus an operator queue. Operators generate the ad from the packet (Imagine stills + motion), then QC and deliver.
 
 ## Stack
 
@@ -19,6 +19,7 @@ TanStack Start, TypeScript, Tailwind, Postgres (Neon in production, embedded PGL
 | `RESEND_API_KEY` | production | Sends confirmation, delivery, and operator mail. Without it, mail is logged in the admin outbox. |
 | `FROM_EMAIL` | optional | Resend from-address. |
 | `ADMIN_PASSWORD` | optional | Alternate admin password if you do not want to type the operator token. |
+| `XAI_API_KEY` | injected | Operator **Generate ad**. Spends the app owner’s quota. |
 | `DATABASE_URL` | production | Injected on deploy. Do not set in preview. |
 
 Never put secrets in client code.
@@ -30,7 +31,7 @@ All routes require `Authorization: Bearer $OPERATOR_TOKEN`.
 - `GET /api/operator/orders?status=paid`
 - `GET /api/operator/orders/:id`
 - `GET /api/operator/orders/:id/packet`
-- `POST /api/operator/orders/:id/claim`
+- `POST /api/operator/orders/:id/generate` body `{ "action": "start" | "tick", "force": false }`
 - `POST /api/operator/orders/:id/attach` body `{ "files": [{ "filename", "url" }] }`
 - `POST /api/operator/orders/:id/qc` body `{ "watched": true, "namesPhoneCityCorrect": true, "noArtifacts": true }`
 - `POST /api/operator/orders/:id/deliver`
