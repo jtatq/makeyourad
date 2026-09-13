@@ -51,14 +51,14 @@ export function recipeSlots(opts: {
   const hook: RecipeSlot = {
     id: "hook",
     label: "Hook",
-    duration: "3–5s",
+    duration: opts.productId === "video-40" ? "5s" : "4s",
     role: "Talking-head open: owner or tech on camera in front of the truck, van, or house, speaking straight to the viewer.",
   };
   const mascot: RecipeSlot = {
     id: "mascot",
-    label: "Mascot",
-    duration: "3–4s",
-    role: "Introduce the recurring character, then hand off to the work.",
+    label: "Mascot (extra)",
+    duration: "6s",
+    role: "Standalone mascot spot. Delivered as its own video — not cut into the 20s/40s master.",
   };
   const body = (n: 1 | 2 | 3, duration: string, role: string): RecipeSlot => ({
     id: `body_${n}`,
@@ -69,26 +69,26 @@ export function recipeSlots(opts: {
   const end: RecipeSlot = {
     id: "end_card",
     label: "End card",
-    duration: opts.productId === "video-40" ? "6–8s" : "5–6s",
+    duration: opts.productId === "video-40" ? "5s" : "6s",
     role: "Logo, business name, city, CTA, phone. Hold long enough to read.",
   };
 
   if (opts.productId === "video-20") {
     return [
       hook,
-      ...(opts.mascot ? [mascot] : []),
-      body(1, opts.mascot ? "8–10s" : "10–12s", "They keep talking — city, proof, what they do. Stay on the person or cut to work from their photos."),
+      body(1, "10s", "They keep talking — city, proof, what they do. Stay on the person or cut to work from their photos."),
       end,
+      ...(opts.mascot ? [mascot] : []),
     ];
   }
 
   return [
     hook,
-    ...(opts.mascot ? [mascot] : []),
-    body(1, "8–10s", "Talking-head continues: name the problem, then the promise."),
-    body(2, "8–10s", "The work itself — still the same person, or a cut to their photos of the job."),
-    body(3, "8–10s", "Local proof, city, then hand to the end card."),
+    body(1, "10s", "Talking-head continues: name the problem, then the promise."),
+    body(2, "10s", "The work itself — still the same person, or a cut to their photos of the job."),
+    body(3, "10s", "Local proof, city, then hand to the end card."),
     end,
+    ...(opts.mascot ? [mascot] : []),
   ];
 }
 
@@ -97,7 +97,32 @@ export function recipeSummary(productId: ProductId, mascot: boolean, tone: Tone)
     return `Static ad · ${tone} · one still in 9:16, 1:1, and 16:9.`;
   }
   const seconds = productId === "video-40" ? 40 : 20;
-  const bodies = productId === "video-40" ? "hook + 3 body clips + end card" : "hook + 1 body clip + end card";
-  const extra = mascot ? " Mascot clip sits after the hook." : "";
+  const bodies = productId === "video-40" ? "hook + 3 body clips + end card, stitched to 40s" : "hook + 1 body clip + end card, stitched to 20s";
+  const extra = mascot ? " Mascot is a separate extra video." : "";
   return `${seconds}s video · ${tone} · ${bodies}.${extra}`;
+}
+
+export type StitchClip = { id: Exclude<SlotId, "mascot" | "static">; seconds: number };
+
+/** Main-timeline clips that concat to the paid 20s / 40s master. Mascot is not included. */
+export function masterClips(productId: ProductId): StitchClip[] {
+  if (productId === "static") return [];
+  if (productId === "video-20") {
+    return [
+      { id: "hook", seconds: 4 },
+      { id: "body_1", seconds: 10 },
+      { id: "end_card", seconds: 6 },
+    ];
+  }
+  return [
+    { id: "hook", seconds: 5 },
+    { id: "body_1", seconds: 10 },
+    { id: "body_2", seconds: 10 },
+    { id: "body_3", seconds: 10 },
+    { id: "end_card", seconds: 5 },
+  ];
+}
+
+export function isMasterSlot(id: SlotId): boolean {
+  return id !== "mascot" && id !== "static";
 }

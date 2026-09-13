@@ -12,8 +12,8 @@ import {
 } from "./orders.server";
 import { buildPacket, type GenerationPacket } from "./prompts/compiler";
 import { TONE_PACKS } from "./prompts/tones";
-import type { SlotId } from "./recipe";
-import type { Tone } from "./products";
+import { masterClips, type SlotId } from "./recipe";
+import { PRODUCTS, type Tone } from "./products";
 
 export type GenEngine = "imagine" | "xai";
 export type GenSlotStatus = "queued" | "still" | "video" | "done" | "error";
@@ -22,6 +22,7 @@ export type GenSlotState = {
   id: SlotId;
   label: string;
   duration: number | null;
+  targetSeconds?: number | null;
   status: GenSlotStatus;
   stillUrl?: string;
   videoUrl?: string;
@@ -38,7 +39,16 @@ export type GenerationJob = {
   startedAt: string;
   updatedAt: string;
   error?: string;
+  masterUrl?: string;
+  mascotUrl?: string;
   slots: GenSlotState[];
+};
+
+export type StitchRequest = {
+  filename: string;
+  durationSeconds: number;
+  aspectRatio: "9:16" | "1:1" | "16:9";
+  clips: Array<{ slotId: SlotId; seconds: number; url: string }>;
 };
 
 export type ImagineWork = {
@@ -380,10 +390,48 @@ async function pollVideo(requestId: string): Promise<{ status: string; url: stri
   return { status, url: pickUrl(body) };
 }
 
+function businessSlug(name: string): string {
+  const s = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return s || "ad";
+}
+
+function jobAspect(order: OrderRow): StitchRequest["aspectRatio"] {
+  const platforms = order.platforms ?? [];
+  if (platforms.includes("youtube") && !platforms.includes("instagram") && !platforms.includes("tiktok")) {
+    return "16:9";
+  }
+  return "9:16";
+}
+
+export function stitchIfReady(order: OrderRow, job: GenerationJob): StitchRequest | null {
+  if (order.product === "static") return null;
+  if (job.masterUrl) return null;
+  const clips = masterClips(order.product);
+  if (clips.length === 0) return null;
+  const ready: StitchRequest["clips"] = [];
+  for (const c of clips) {
+    const slot = job.slots.find((s) => s.id === c.id);
+    if (!slot || slot.status !== "done" || !slot.videoUrl) return null;
+    ready.push({ slotId: c.id, seconds: slot.targetSeconds || c.seconds, url: slot.videoUrl });
+  }
+  const durationSeconds = PRODUCTS[order.product].durationSeconds ?? clips.reduce((n, c) => n + c.seconds, 0);
+  return {
+    filename: `${businessSlug(order.business_name)}-${durationSeconds}s.mp4`,
+    durationSeconds,
+    aspectRatio: jobAspect(order),
+    clips: ready,
+  };
+}
+
 async function clearGenFiles(orderId: string) {
   const sql = await getSql();
   await sql.query(
-    `delete from order_assets where order_id = $1 and kind in ('still','delivery') and filename like '%-gen.%'`,
+    `delete from order_assets where order_id = $1 and kind in ('still','delivery')
+      and (filename like '%-gen.%' or filename like '%-20s.mp4' or filename like '%-40s.mp4' or filename like '%-mascot.mp4')`,
     [orderId],
   );
 }
@@ -397,11 +445,13 @@ function initJob(packet: GenerationPacket, engine: GenEngine): GenerationJob {
     startedAt: now,
     updatedAt: now,
     slots: packet.recipe.slots.map((s) => {
-      const duration = engine === "imagine" ? imagineSeconds(s.duration) : slotSeconds(s.duration);
+      const target = slotSeconds(s.duration);
+      const duration = engine === "imagine" ? imagineSeconds(s.duration) : target;
       return {
         id: s.id,
         label: s.label,
         duration,
+        targetSeconds: target,
         status: "queued" as const,
         stillPrompt: engine === "imagine" ? imagineStillPrompt(packet, s, ratio) : stillPrompt(packet, s, ratio),
         motionPrompt:
@@ -548,17 +598,41 @@ export async function completeImagineSlot(opts: {
   dataUrl?: string;
   url?: string;
   origin: string;
-}): Promise<{ job: GenerationJob; order: OrderRow }> {
+}): Promise<{ job: GenerationJob; order: OrderRow; stitch: StitchRequest | null }> {
   const order = await getOrder(opts.orderId);
   if (!order) throw new Error("Order not found");
   const job = await loadGeneration(opts.orderId);
   if (!job) throw new Error("No generation in progress");
-  const slot = job.slots.find((s) => s.id === opts.slotId);
-  if (!slot) throw new Error("Unknown slot");
   if (!opts.dataUrl && !opts.url) throw new Error("Provide dataUrl or url");
 
-  const filename = opts.filename.replace(/[^\w.\-]+/g, "-").slice(0, 120) || `${slot.id}-gen.bin`;
   const mime = opts.mime || (opts.kind === "video" ? "video/mp4" : "image/jpeg");
+  const slug = businessSlug(order.business_name);
+
+  if (opts.slotId === "master") {
+    const filename =
+      opts.filename.replace(/[^\w.\-]+/g, "-").slice(0, 120) ||
+      `${slug}-${PRODUCTS[order.product].durationSeconds ?? 20}s.mp4`;
+    const attached = await attachGen(opts.orderId, filename, opts.url ?? null, mime, "delivery", opts.dataUrl);
+    job.masterUrl = assetViewUrl(opts.origin, attached.id, opts.dataUrl);
+    job.updatedAt = new Date().toISOString();
+    await appendEvent(
+      opts.orderId,
+      "generate",
+      `Master stitched · ${PRODUCTS[order.product].durationSeconds ?? 20}s.`,
+      "grok",
+    );
+    finishIfDone(job);
+    if (job.status === "done") {
+      await appendEvent(opts.orderId, "generate", "All slots generated. QC next.", "grok");
+    }
+    await saveGeneration(opts.orderId, job);
+    return { job, order: (await getOrder(opts.orderId))!, stitch: null };
+  }
+
+  const slot = job.slots.find((s) => s.id === opts.slotId);
+  if (!slot) throw new Error("Unknown slot");
+
+  const filename = opts.filename.replace(/[^\w.\-]+/g, "-").slice(0, 120) || `${slot.id}-gen.bin`;
 
   if (opts.kind === "still") {
     const attached = await attachGen(
@@ -582,19 +656,24 @@ export async function completeImagineSlot(opts: {
       await appendEvent(opts.orderId, "generate", `Still ready · ${slot.label}. Animating next.`, "grok");
     }
   } else {
-    const attached = await attachGen(
-      opts.orderId,
-      filename.endsWith(".mp4") ? filename : `${slot.id}-gen.mp4`,
-      opts.url ?? null,
-      mime,
-      "delivery",
-      opts.dataUrl,
-    );
+    const outName =
+      slot.id === "mascot"
+        ? `${slug}-mascot.mp4`
+        : filename.endsWith(".mp4")
+          ? filename
+          : `${slot.id}-gen.mp4`;
+    const attached = await attachGen(opts.orderId, outName, opts.url ?? null, mime, "delivery", opts.dataUrl);
     slot.videoUrl = assetViewUrl(opts.origin, attached.id, opts.dataUrl);
     slot.status = "done";
     slot.claimedAt = undefined;
     slot.error = undefined;
-    await appendEvent(opts.orderId, "generate", `Clip ready · ${slot.label}.`, "grok");
+    if (slot.id === "mascot") job.mascotUrl = slot.videoUrl;
+    await appendEvent(
+      opts.orderId,
+      "generate",
+      slot.id === "mascot" ? "Mascot extra video ready." : `Clip ready · ${slot.label}.`,
+      "grok",
+    );
   }
 
   finishIfDone(job);
@@ -602,7 +681,8 @@ export async function completeImagineSlot(opts: {
     await appendEvent(opts.orderId, "generate", "All slots generated. QC next.", "grok");
   }
   await saveGeneration(opts.orderId, job);
-  return { job, order: (await getOrder(opts.orderId))! };
+  const fresh = (await getOrder(opts.orderId))!;
+  return { job, order: fresh, stitch: opts.kind === "video" ? stitchIfReady(fresh, job) : null };
 }
 
 export async function tickGeneration(

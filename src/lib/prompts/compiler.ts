@@ -133,8 +133,8 @@ function slotPrompt(slot: RecipeSlot, intake: IntakeForPrompt, mascot: boolean, 
       header,
       `ROLE: ${slot.role}`,
       `Character: {{mascot}}`,
-      `The mascot appears after the hook as a recurring figure for this business. Keep the design simple enough to animate consistently later. Match the tone. No horror, no celebrity likeness.`,
-      `One beat: mascot notices the problem or welcomes the viewer, then yields to the work footage.`,
+      `The mascot is a standalone extra video, not cut into the 20s/40s master. Keep the design simple enough to animate consistently later. Match the tone. No horror, no celebrity likeness.`,
+      `One beat: the character greets the viewer or notices the problem. End on the character — do not hand to the end card here.`,
       `Do not cover the end card here.`,
     ].join("\n"),
     body_1: [
@@ -144,7 +144,7 @@ function slotPrompt(slot: RecipeSlot, intake: IntakeForPrompt, mascot: boolean, 
       `Stay in the talking-head. Same person, same location language as the hook. They keep addressing the camera — proof, city, what they actually do.`,
       `If the uploads show the work (unit, roof, job site), you may cut to that for a beat, then return to the person.`,
       `VO continues the hook; do not repeat the hook line. Captions match VO.`,
-      mascot ? `The mascot may cameo in a corner, but the speaker is the subject.` : ``,
+      mascot ? `Do not put the mascot in this clip. The mascot is a separate extra video.` : ``,
     ].join("\n"),
     body_2: [
       header,
@@ -223,7 +223,7 @@ export function buildPacket(opts: {
     "QC must confirm names, phone, and city are correct before delivery.",
     `Primary aspect: ${aspectRatioPriority(opts.intake.platforms)[0]}.`,
   ];
-  if (mascot) notes.push("Mascot is an add-on — it must appear as its own clip (video) or as a character in the still.");
+  if (mascot) notes.push("Mascot is an add-on extra video, delivered beside the stitched 20s/40s master — not edited into it.");
   if (opts.intake.websiteProfile?.sourceUrl) {
     notes.push("Logo and photos were pulled from the business website. Keep their real branding.");
   }

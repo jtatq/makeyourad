@@ -199,8 +199,8 @@ function Detail({
             <h2 className="font-display text-xl">Generate</h2>
             <p className="mt-1 text-sm text-muted">
               {engine === "imagine"
-                ? "Grok Imagine draws each recipe slot from this SuperGrok account — still first, then motion. Uses the customer’s photos when we have them."
-                : "Builds each recipe slot from the packet. Stills first, then motion. Uses the customer’s photos when we have them."}
+                ? "Grok Imagine draws each recipe slot from this SuperGrok account — still first, then motion. Hook, body, and end card stitch into one 20s or 40s master. A mascot add-on is a separate extra video."
+                : "Builds each recipe slot from the packet. Stills first, then motion. Hook, body, and end card stitch into one 20s or 40s master. A mascot add-on is a separate extra video."}
             </p>
             {generation?.error ? <p className="mt-2 text-sm text-danger">{generation.error}</p> : null}
             {!canGenerate ? (
@@ -251,7 +251,7 @@ function Detail({
                               : s.status === "video"
                                 ? "animating"
                                 : s.status}
-                        {s.duration ? ` · ${s.duration}s` : ""}
+                        {s.targetSeconds ? ` · ${s.targetSeconds}s` : s.duration ? ` · ${s.duration}s` : ""}
                       </span>
                     </div>
                     {s.error ? <p className="mt-1 text-xs text-danger">{s.error}</p> : null}
@@ -267,6 +267,14 @@ function Detail({
                   </li>
                 ))}
               </ol>
+            ) : null}
+            {generation?.masterUrl ? (
+              <div className="mt-4">
+                <p className="text-sm font-medium">
+                  Master · {PRODUCTS[order.product]?.durationSeconds ?? 20}s
+                </p>
+                <video src={generation.masterUrl} className="mt-2 aspect-[9/16] w-full rounded-md bg-bg" controls playsInline />
+              </div>
             ) : null}
           </section>
           <section className="panel p-5">

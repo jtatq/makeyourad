@@ -387,7 +387,7 @@ export function OrderForm({ productId, initialSite }: { productId: ProductId; in
             <span>
               <span className="block font-medium">Add a mascot character · {formatUsd(MASCOT_CENTS)}</span>
               <span className="mt-1 block text-sm text-muted">
-                A recurring character designed for this business, included in the ad.
+                A recurring character as its own extra video, delivered beside the 20s or 40s ad.
               </span>
             </span>
           </label>
