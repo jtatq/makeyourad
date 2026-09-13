@@ -597,8 +597,8 @@ const SEED_DEMO_EMAILS = [
 export async function purgeSeedDemoOrders() {
   const sql = await getSql();
   const rows = await sql.query<{ id: string }>(
-    `select id from orders where email = any($1::text[])`,
-    [SEED_DEMO_EMAILS],
+    `select id from orders where email in ($1,$2,$3)`,
+    SEED_DEMO_EMAILS,
   );
   if (!rows.length) return 0;
   for (const row of rows) {

@@ -3,7 +3,7 @@
  * Vercel/Nitro traces pglite.wasm but not the sibling pglite.data blob
  * Emscripten reads at runtime. Copy both into every serverless function.
  */
-import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -43,4 +43,14 @@ for (const funcDir of dirs) {
     copyFileSync(from, join(funcDir, name));
   }
   console.log(`[pglite] copied assets into ${funcDir}`);
+  const cfgPath = join(funcDir, ".vc-config.json");
+  if (existsSync(cfgPath)) {
+    try {
+      const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
+      cfg.maxDuration = 300;
+      writeFileSync(cfgPath, JSON.stringify(cfg));
+    } catch {
+      // leave the framework's config if it isn't JSON
+    }
+  }
 }
