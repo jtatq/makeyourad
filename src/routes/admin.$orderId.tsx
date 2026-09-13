@@ -107,7 +107,7 @@ function Detail({
 
 
   return (
-    <div className="min-h-dvh pb-16">
+    <div className="min-h-dvh max-w-full overflow-x-hidden pb-16">
       <header className="border-b border-border bg-surface">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
           <Link to="/admin" className="flex items-center gap-2 text-sm text-muted hover:text-fg">
@@ -117,19 +117,19 @@ function Detail({
           <StatusPill status={order.status} />
         </div>
       </header>
-      <main className="mx-auto grid max-w-6xl gap-8 px-4 py-8 lg:grid-cols-[minmax(0,1fr)_340px] sm:px-6">
-        <div>
+      <main className="mx-auto grid w-full min-w-0 max-w-6xl gap-8 px-4 py-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,340px)] sm:px-6">
+        <div className="min-w-0 order-2 lg:order-1">
           <p className="font-mono text-xs text-muted">
             {order.id} · {hoursLabel(order.created_at)}
           </p>
-          <h1 className="mt-2 font-display text-4xl">{order.business_name}</h1>
+          <h1 className="mt-2 font-display text-3xl break-words sm:text-4xl">{order.business_name}</h1>
           <p className="mt-2 text-muted">
             {PRODUCTS[order.product]?.name}
             {order.add_ons.includes("mascot") ? " + mascot" : ""} · {formatUsd(order.price_cents)} · {order.city},{" "}
             {order.state}
           </p>
 
-          <dl className="panel mt-8 grid gap-3 p-5 text-sm sm:grid-cols-2">
+          <dl className="panel mt-8 grid min-w-0 gap-3 overflow-hidden p-5 text-sm sm:grid-cols-2">
             <Item label="Email" value={order.email} />
             <Item label="Phone" value={order.phone} />
             <Item label="Category" value={order.category} />
@@ -188,19 +188,22 @@ function Detail({
           </div>
 
           <h2 className="mt-10 font-display text-2xl">Generation packet</h2>
-          <p className="mt-1 text-sm text-muted">This is the whole job. Prompts map 1:1 to recipe slots.</p>
-          <pre className="mt-4 max-h-[480px] overflow-auto rounded-lg bg-bg p-4 font-mono text-[11px] leading-relaxed text-muted">
-            {JSON.stringify(packet, null, 2)}
-          </pre>
+          <p className="mt-1 text-sm text-muted">Prompts map 1:1 to recipe slots. Collapse this on a phone.</p>
+          <details className="mt-4 min-w-0">
+            <summary className="cursor-pointer text-sm text-muted">Show packet JSON</summary>
+            <pre className="mt-2 max-h-[320px] max-w-full overflow-auto whitespace-pre-wrap break-words rounded-lg bg-bg p-4 font-mono text-[11px] leading-relaxed text-muted">
+              {JSON.stringify(packet, null, 2)}
+            </pre>
+          </details>
         </div>
 
-        <aside className="flex flex-col gap-4">
+        <aside className="flex min-w-0 flex-col gap-4 order-1 lg:order-2">
           <section className="panel p-5">
             <h2 className="font-display text-xl">Generate</h2>
             <p className="mt-1 text-sm text-muted">
               {engine === "imagine"
                 ? "Grok Imagine draws each recipe slot from this SuperGrok account — still first, then motion. Hook, body, and end card stitch into one 20s or 40s master. A mascot add-on is a separate extra video."
-                : "Builds each recipe slot from the packet. Stills first, then motion. Hook, body, and end card stitch into one 20s or 40s master. A mascot add-on is a separate extra video."}
+                : "xAI builds each recipe slot from the packet. Stills first, then motion. Hook, body, and end card stitch into one 20s or 40s master. A mascot add-on is a separate extra video."}
             </p>
             {generation?.error ? <p className="mt-2 text-sm text-danger">{generation.error}</p> : null}
             {!canGenerate ? (
@@ -211,6 +214,7 @@ function Detail({
             {error && busy === "generate" ? <p className="mt-2 text-sm text-danger">{error}</p> : null}
             <div className="mt-4 flex flex-col gap-2">
               <Button
+                className="w-full"
                 disabled={!canGenerate || busy !== null || generating}
                 onClick={() =>
                   void run("generate", () =>
@@ -408,7 +412,7 @@ function Detail({
                   <span className="block text-xs text-muted">
                     {e.actor} · {new Date(e.created_at).toLocaleString()}
                   </span>
-                  {e.note ? <span className="block text-muted">{e.note}</span> : null}
+                  {e.note ? <span className="block break-words text-muted">{e.note}</span> : null}
                 </li>
               ))}
             </ol>
@@ -421,9 +425,9 @@ function Detail({
 
 function Item({ label, value }: { label: string; value: string }) {
   return (
-    <div>
+    <div className="min-w-0">
       <dt className="eyebrow">{label}</dt>
-      <dd className="mt-0.5">{value}</dd>
+      <dd className="mt-0.5 break-words">{value}</dd>
     </div>
   );
 }

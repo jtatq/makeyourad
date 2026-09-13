@@ -75,10 +75,12 @@ function apiKey(): string | null {
   return process.env.XAI_API_KEY?.trim() || null;
 }
 
-/** SuperGrok Imagine is the default. Set GENERATION_ENGINE=xai to use the REST key. */
+/** Prefer the xAI REST API when a key is present so Generate works on Vercel. */
 export function generationEngine(): GenEngine {
   const forced = env("GENERATION_ENGINE");
+  if (forced === "imagine") return "imagine";
   if (forced === "xai") return "xai";
+  if (apiKey()) return "xai";
   return "imagine";
 }
 
@@ -724,7 +726,10 @@ export async function tickGeneration(
   }
 
   const activeEngine = job.engine ?? engine;
-  if (activeEngine === "imagine") {
+  if (activeEngine === "imagine" && engine === "xai") {
+    job.engine = "xai";
+  }
+  if ((job.engine ?? engine) === "imagine") {
     finishIfDone(job);
     await saveGeneration(orderId, job);
     return { job, order: (await getOrder(orderId))! };

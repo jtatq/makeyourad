@@ -71,11 +71,11 @@ function QueuePage() {
         ) : null}
         {dashboard.generationEngine === "imagine" ? (
           <div className="mb-4 rounded-md bg-elevated px-4 py-3 text-sm text-muted">
-            Ads generate through SuperGrok Imagine on this account. Open an order and click Generate ad.
+            Generate queues stills for SuperGrok Imagine. Add XAI_API_KEY in Vercel if you want it to run on its own.
           </div>
         ) : !dashboard.aiAvailable ? (
           <div className="mb-4 rounded-md bg-warn px-4 py-3 text-sm text-fg">
-            Generate is off on this host. Add an image engine, then Redeploy.
+            Generate is off on this host. Add XAI_API_KEY in Vercel → Environment Variables, then Redeploy.
           </div>
         ) : null}
         {sla.critical_20h.length > 0 ? (
