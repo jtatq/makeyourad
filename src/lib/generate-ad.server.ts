@@ -31,6 +31,8 @@ export type GenSlotState = {
   motionPrompt?: string;
   claimedAt?: string;
   error?: string;
+  qc?: "pass" | "fix";
+  qcNote?: string;
 };
 
 export type GenerationJob = {
@@ -41,6 +43,7 @@ export type GenerationJob = {
   error?: string;
   masterUrl?: string;
   mascotUrl?: string;
+  assembleRequested?: boolean;
   slots: GenSlotState[];
 };
 
@@ -417,6 +420,7 @@ export function stitchIfReady(order: OrderRow, job: GenerationJob): StitchReques
   for (const c of clips) {
     const slot = job.slots.find((s) => s.id === c.id);
     if (!slot || slot.status !== "done" || !slot.videoUrl) return null;
+    if (slot.qc !== "pass") return null;
     ready.push({ slotId: c.id, seconds: slot.targetSeconds || c.seconds, url: slot.videoUrl });
   }
   const durationSeconds = PRODUCTS[order.product].durationSeconds ?? clips.reduce((n, c) => n + c.seconds, 0);
@@ -426,6 +430,124 @@ export function stitchIfReady(order: OrderRow, job: GenerationJob): StitchReques
     aspectRatio: jobAspect(order),
     clips: ready,
   };
+}
+
+export function clipQcSummary(order: OrderRow, job: GenerationJob) {
+  const needed = masterClips(order.product);
+  const rows = needed.map((c) => {
+    const slot = job.slots.find((s) => s.id === c.id);
+    return {
+      id: c.id,
+      label: slot?.label ?? c.id,
+      qc: slot?.qc ?? null,
+      ready: Boolean(slot?.videoUrl || (slot?.status === "done" && slot?.stillUrl)),
+    };
+  });
+  return {
+    passed: rows.filter((r) => r.qc === "pass").length,
+    needed: rows.length,
+    open: rows.filter((r) => r.qc !== "pass").map((r) => r.label),
+    allPassed: rows.every((r) => r.qc === "pass" && r.ready),
+  };
+}
+
+export async function reviewSlot(
+  orderId: string,
+  slotId: SlotId,
+  verdict: "pass" | "fix",
+  note?: string,
+): Promise<{ job: GenerationJob; order: OrderRow; stitch: StitchRequest | null }> {
+  const order = await getOrder(orderId);
+  if (!order) throw new Error("Order not found");
+  const job = await loadGeneration(orderId);
+  if (!job) throw new Error("No clips to review yet");
+  const slot = job.slots.find((s) => s.id === slotId);
+  if (!slot) throw new Error("Unknown clip");
+  if (!slot.videoUrl && !slot.stillUrl) throw new Error("That clip is not ready yet");
+  slot.qc = verdict;
+  slot.qcNote = note?.trim() || slot.qcNote;
+  if (verdict === "fix") {
+    job.masterUrl = undefined;
+    job.assembleRequested = false;
+  }
+  await saveGeneration(orderId, job);
+  await appendEvent(
+    orderId,
+    "qc",
+    verdict === "pass"
+      ? `Passed QC · ${slot.label}.`
+      : `Needs fix · ${slot.label}${slot.qcNote ? ` · ${slot.qcNote}` : ""}.`,
+    "admin",
+  );
+  return { job, order, stitch: stitchIfReady(order, job) };
+}
+
+export async function regenSlot(
+  orderId: string,
+  slotId: SlotId,
+  note?: string,
+): Promise<{ job: GenerationJob; order: OrderRow }> {
+  const order = await getOrder(orderId);
+  if (!order) throw new Error("Order not found");
+  const job = await loadGeneration(orderId);
+  if (!job) throw new Error("No generation to redo");
+  const slot = job.slots.find((s) => s.id === slotId);
+  if (!slot) throw new Error("Unknown clip");
+  const extra = (note ?? slot.qcNote)?.trim();
+  if (extra) {
+    slot.qcNote = extra;
+    const add = ` Revision: ${extra}`;
+    if (slot.stillPrompt && !slot.stillPrompt.includes(extra)) slot.stillPrompt += add;
+    if (slot.motionPrompt && !slot.motionPrompt.includes(extra)) slot.motionPrompt += add;
+  }
+  slot.status = "queued";
+  slot.stillUrl = undefined;
+  slot.videoUrl = undefined;
+  slot.videoRequestId = undefined;
+  slot.claimedAt = undefined;
+  slot.error = undefined;
+  slot.qc = "fix";
+  job.status = "running";
+  job.error = undefined;
+  job.masterUrl = undefined;
+  job.assembleRequested = false;
+  if (slotId === "mascot") job.mascotUrl = undefined;
+  await saveGeneration(orderId, job);
+  await appendEvent(orderId, "generate", `Redo · ${slot.label}${extra ? ` · ${extra}` : ""}.`, "admin");
+  if (generationEngine() === "xai") {
+    return tickGeneration(orderId, { action: "tick" });
+  }
+  return { job, order: (await getOrder(orderId))! };
+}
+
+export async function assembleMaster(orderId: string): Promise<{
+  job: GenerationJob;
+  order: OrderRow;
+  stitch: StitchRequest;
+}> {
+  const order = await getOrder(orderId);
+  if (!order) throw new Error("Order not found");
+  const job = await loadGeneration(orderId);
+  if (!job) throw new Error("No clips to assemble");
+  const stitch = stitchIfReady(order, { ...job, masterUrl: undefined });
+  if (!stitch) {
+    const summary = clipQcSummary(order, job);
+    throw new Error(
+      summary.open.length
+        ? `Pass QC on ${summary.open.join(", ")} before assembling.`
+        : "Need a video on hook, body, and end card first.",
+    );
+  }
+  job.assembleRequested = true;
+  job.masterUrl = undefined;
+  await saveGeneration(orderId, job);
+  await appendEvent(
+    orderId,
+    "generate",
+    `Assemble master · ${stitch.durationSeconds}s after clip QC.`,
+    "admin",
+  );
+  return { job, order, stitch };
 }
 
 async function clearGenFiles(orderId: string) {

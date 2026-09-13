@@ -3,7 +3,7 @@ import { getRequest, setResponseHeader } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { listOutbound, sendSlaDigest } from "./email.server";
 import { dbSource } from "./db";
-import { aiAvailable, generationEngine, loadGeneration, tickGeneration } from "./generate-ad.server";
+import { aiAvailable, assembleMaster, generationEngine, loadGeneration, regenSlot, reviewSlot, tickGeneration } from "./generate-ad.server";
 import {
   attachFiles,
   claimOrder,
@@ -132,6 +132,42 @@ export const adminGenerate = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     requireAdmin();
     return tickGeneration(data.id, { action: data.action, force: data.force });
+  });
+
+const SlotIdSchema = z.enum(["hook", "mascot", "body_1", "body_2", "body_3", "end_card", "static"]);
+
+export const adminSlotQc = createServerFn({ method: "POST" })
+  .validator(
+    z.object({
+      id: z.string(),
+      slotId: SlotIdSchema,
+      verdict: z.enum(["pass", "fix"]),
+      note: z.string().optional(),
+    }),
+  )
+  .handler(async ({ data }) => {
+    requireAdmin();
+    return reviewSlot(data.id, data.slotId, data.verdict, data.note);
+  });
+
+export const adminRegenSlot = createServerFn({ method: "POST" })
+  .validator(
+    z.object({
+      id: z.string(),
+      slotId: SlotIdSchema,
+      note: z.string().optional(),
+    }),
+  )
+  .handler(async ({ data }) => {
+    requireAdmin();
+    return regenSlot(data.id, data.slotId, data.note);
+  });
+
+export const adminAssemble = createServerFn({ method: "POST" })
+  .validator(z.object({ id: z.string() }))
+  .handler(async ({ data }) => {
+    requireAdmin();
+    return assembleMaster(data.id);
   });
 
 export const adminAttach = createServerFn({ method: "POST" })

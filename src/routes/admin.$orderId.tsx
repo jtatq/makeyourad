@@ -5,6 +5,7 @@ import { Mark } from "@/components/layout/site-chrome";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Textarea } from "@/components/ui/input";
 import {
+  adminAssemble,
   adminAttach,
   adminClaim,
   adminDeliver,
@@ -13,10 +14,13 @@ import {
   adminOrder,
   adminQc,
   adminRefund,
+  adminRegenSlot,
   adminRemake,
   adminSession,
+  adminSlotQc,
 } from "@/lib/admin.functions";
 import { PRODUCTS } from "@/lib/products";
+import { masterClips } from "@/lib/recipe";
 import { formatUsd } from "@/lib/utils";
 
 export const Route = createFileRoute("/admin/$orderId")({
@@ -71,6 +75,7 @@ function Detail({
   const [names, setNames] = useState(false);
   const [clean, setClean] = useState(false);
   const [note, setNote] = useState("");
+  const [fixNotes, setFixNotes] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -106,6 +111,21 @@ function Detail({
   const generating = busy === "generate" || generation?.status === "running";
   const hasOutput = Boolean(generation?.slots.some((s) => s.stillUrl || s.videoUrl));
   const stuckWaiting = generation?.status === "running" && !hasOutput;
+  const masterIds = masterClips(order.product).map((c) => c.id);
+  const qcOpen = generation
+    ? masterIds
+        .map((id) => generation.slots.find((s) => s.id === id))
+        .filter((s) => s && s.qc !== "pass")
+        .map((s) => s!.label)
+    : [];
+  const clipsReady = Boolean(
+    generation &&
+      masterIds.every((id) => {
+        const s = generation.slots.find((x) => x.id === id);
+        return s?.status === "done" && (s.videoUrl || s.stillUrl);
+      }),
+  );
+  const allClipsPassed = clipsReady && qcOpen.length === 0;
 
 
   return (
@@ -203,9 +223,7 @@ function Detail({
           <section className="panel p-5">
             <h2 className="font-display text-xl">Generate</h2>
             <p className="mt-1 text-sm text-muted">
-              {engine === "imagine"
-                ? "Grok Imagine draws each recipe slot from this SuperGrok account — still first, then motion. Hook, body, and end card stitch into one 20s or 40s master. A mascot add-on is a separate extra video."
-                : "xAI builds each recipe slot from the packet. Stills first, then motion. Hook, body, and end card stitch into one 20s or 40s master. A mascot add-on is a separate extra video."}
+              Watch each clip. Pass or mark needs-fix before the 20s/40s master is assembled. Mascot stays a separate extra.
             </p>
             {generation?.error ? <p className="mt-2 text-sm text-danger">{generation.error}</p> : null}
             {!canGenerate ? (
@@ -254,46 +272,130 @@ function Detail({
               </Button>
             </div>
             {generation ? (
-              <ol className="mt-4 space-y-3">
-                {generation.slots.map((s) => (
-                  <li key={s.id} className="text-sm">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <span className="font-medium">{s.label}</span>
-                      <span className="text-xs uppercase tracking-wider text-muted">
-                        {s.status === "queued"
-                          ? "waiting"
-                          : s.status === "still" && !s.stillUrl
-                            ? "drawing"
-                            : s.status === "still"
-                              ? "animating"
-                              : s.status === "video"
-                                ? "animating"
-                                : s.status}
-                        {s.targetSeconds ? ` · ${s.targetSeconds}s` : s.duration ? ` · ${s.duration}s` : ""}
-                      </span>
-                    </div>
-                    {s.error ? <p className="mt-1 text-xs text-danger">{s.error}</p> : null}
-                    {(s.videoUrl || s.stillUrl) && (
-                      <div className="mt-2 max-h-[52vh] overflow-hidden rounded-md bg-elevated">
-                        {s.videoUrl ? (
-                          <video
-                            src={s.videoUrl}
-                            className="mx-auto max-h-[52vh] w-full bg-bg object-contain"
-                            controls
-                            playsInline
-                          />
-                        ) : (
-                          <img
-                            src={s.stillUrl}
-                            alt=""
-                            className="mx-auto max-h-[52vh] w-full object-contain"
-                          />
-                        )}
+              <ol className="mt-4 space-y-5">
+                {generation.slots.map((s) => {
+                  const playable = Boolean(s.videoUrl || s.stillUrl);
+                  const noteVal = fixNotes[s.id] ?? s.qcNote ?? "";
+                  return (
+                    <li key={s.id} className="min-w-0 text-sm">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span className="font-medium">{s.label}</span>
+                        <span className="text-xs uppercase tracking-wider text-muted">
+                          {s.qc === "pass"
+                            ? "passed"
+                            : s.qc === "fix"
+                              ? "needs fix"
+                              : s.status === "queued"
+                                ? "waiting"
+                                : s.status === "still" && !s.stillUrl
+                                  ? "drawing"
+                                  : s.status === "still"
+                                    ? "animating"
+                                    : s.status === "video"
+                                      ? "animating"
+                                      : s.status}
+                          {s.targetSeconds ? ` · ${s.targetSeconds}s` : s.duration ? ` · ${s.duration}s` : ""}
+                        </span>
                       </div>
-                    )}
-                  </li>
-                ))}
+                      {s.error ? <p className="mt-1 text-xs text-danger">{s.error}</p> : null}
+                      {playable ? (
+                        <div className="mt-2 max-h-[52vh] overflow-hidden rounded-md bg-elevated">
+                          {s.videoUrl ? (
+                            <video
+                              src={s.videoUrl}
+                              className="mx-auto max-h-[52vh] w-full bg-bg object-contain"
+                              controls
+                              playsInline
+                            />
+                          ) : (
+                            <img src={s.stillUrl} alt="" className="mx-auto max-h-[52vh] w-full object-contain" />
+                          )}
+                        </div>
+                      ) : null}
+                      {playable ? (
+                        <div className="mt-2 flex min-w-0 flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            variant={s.qc === "pass" ? "primary" : "secondary"}
+                            disabled={busy !== null}
+                            onClick={() =>
+                              void run("qc-slot", () =>
+                                adminSlotQc({
+                                  data: { id: order.id, slotId: s.id, verdict: "pass", note: noteVal },
+                                }),
+                              )
+                            }
+                          >
+                            Pass
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant={s.qc === "fix" ? "danger" : "secondary"}
+                            disabled={busy !== null}
+                            onClick={() =>
+                              void run("qc-slot", () =>
+                                adminSlotQc({
+                                  data: { id: order.id, slotId: s.id, verdict: "fix", note: noteVal },
+                                }),
+                              )
+                            }
+                          >
+                            Needs fix
+                          </Button>
+                        </div>
+                      ) : null}
+                      {s.qc === "fix" || (playable && s.qc !== "pass") ? (
+                        <div className="mt-2 grid gap-2">
+                          <Label htmlFor={`fix-${s.id}`} className="sr-only">
+                            Fix note for {s.label}
+                          </Label>
+                          <Textarea
+                            id={`fix-${s.id}`}
+                            rows={2}
+                            placeholder={
+                              s.id === "hook"
+                                ? "e.g. Pronounce Heber City as HEE-ber City"
+                                : "What should change on the redo?"
+                            }
+                            value={noteVal}
+                            onChange={(e) => setFixNotes((cur) => ({ ...cur, [s.id]: e.target.value }))}
+                          />
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={busy !== null || !canGenerate}
+                            onClick={() =>
+                              void run("regen", () =>
+                                adminRegenSlot({
+                                  data: { id: order.id, slotId: s.id, note: noteVal },
+                                }),
+                              )
+                            }
+                          >
+                            Redo {s.label.toLowerCase()}
+                          </Button>
+                        </div>
+                      ) : null}
+                    </li>
+                  );
+                })}
               </ol>
+            ) : null}
+            {generation && clipsReady && !allClipsPassed ? (
+              <p className="mt-4 text-sm text-warn">
+                Pass every master clip before assembling. Still open: {qcOpen.join(", ")}.
+              </p>
+            ) : null}
+            {generation && allClipsPassed ? (
+              <div className="mt-4">
+                <Button
+                  className="w-full"
+                  disabled={busy !== null}
+                  onClick={() => void run("assemble", () => adminAssemble({ data: { id: order.id } }))}
+                >
+                  Assemble {PRODUCTS[order.product]?.durationSeconds ?? 20}s master
+                </Button>
+              </div>
             ) : null}
             {generation?.masterUrl ? (
               <div className="mt-4">
