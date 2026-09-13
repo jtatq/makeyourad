@@ -167,12 +167,12 @@ function Detail({
               <p className="col-span-full text-sm text-muted">No uploads on this order.</p>
             ) : (
               uploads.map((a) => (
-                <div key={a.id} className="overflow-hidden rounded-md bg-elevated text-xs">
+                <div key={a.id} className="min-w-0 overflow-hidden rounded-md bg-elevated text-xs">
                   {a.preview_url ? (
                     <img
                       src={a.preview_url}
                       alt=""
-                      className={`aspect-square w-full ${a.kind === "logo" ? "object-contain bg-surface p-2" : "object-cover"}`}
+                      className="mx-auto h-24 w-full object-contain bg-surface p-1"
                       onError={(e) => {
                         e.currentTarget.style.visibility = "hidden";
                       }}
@@ -256,11 +256,20 @@ function Detail({
                     </div>
                     {s.error ? <p className="mt-1 text-xs text-danger">{s.error}</p> : null}
                     {(s.videoUrl || s.stillUrl) && (
-                      <div className="mt-2 overflow-hidden rounded-md bg-elevated">
+                      <div className="mt-2 max-h-[52vh] overflow-hidden rounded-md bg-elevated">
                         {s.videoUrl ? (
-                          <video src={s.videoUrl} className="aspect-[9/16] w-full bg-bg" controls playsInline />
+                          <video
+                            src={s.videoUrl}
+                            className="mx-auto max-h-[52vh] w-full bg-bg object-contain"
+                            controls
+                            playsInline
+                          />
                         ) : (
-                          <img src={s.stillUrl} alt="" className="aspect-[9/16] w-full object-cover" />
+                          <img
+                            src={s.stillUrl}
+                            alt=""
+                            className="mx-auto max-h-[52vh] w-full object-contain"
+                          />
                         )}
                       </div>
                     )}
@@ -273,7 +282,12 @@ function Detail({
                 <p className="text-sm font-medium">
                   Master · {PRODUCTS[order.product]?.durationSeconds ?? 20}s
                 </p>
-                <video src={generation.masterUrl} className="mt-2 aspect-[9/16] w-full rounded-md bg-bg" controls playsInline />
+                <video
+                  src={generation.masterUrl}
+                  className="mt-2 max-h-[52vh] w-full rounded-md bg-bg object-contain"
+                  controls
+                  playsInline
+                />
               </div>
             ) : null}
           </section>
@@ -308,7 +322,12 @@ function Detail({
                   {deliveries.map((d) => (
                     <li key={d.id}>
                       {d.preview_url && d.mime.startsWith("video/") ? (
-                        <video src={d.preview_url} className="mb-1 aspect-[9/16] w-full rounded-md bg-bg" controls playsInline />
+                        <video
+                          src={d.preview_url}
+                          className="mb-1 max-h-[52vh] w-full rounded-md bg-bg object-contain"
+                          controls
+                          playsInline
+                        />
                       ) : null}
                       {d.filename}
                     </li>
