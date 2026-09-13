@@ -587,6 +587,28 @@ export async function joinWaitlist(opts: {
   return { id, already: false };
 }
 
+const SEED_DEMO_EMAILS = [
+  "pat@desertair.example",
+  "hello@northside.example",
+  "desk@willowdental.example",
+];
+
+/** Removes leftover sample businesses if they landed in the live Neon DB. */
+export async function purgeSeedDemoOrders() {
+  const sql = await getSql();
+  const rows = await sql.query<{ id: string }>(
+    `select id from orders where email = any($1::text[])`,
+    [SEED_DEMO_EMAILS],
+  );
+  if (!rows.length) return 0;
+  for (const row of rows) {
+    await sql.query(`delete from order_assets where order_id = $1`, [row.id]);
+    await sql.query(`delete from order_events where order_id = $1`, [row.id]);
+    await sql.query(`delete from orders where id = $1`, [row.id]);
+  }
+  return rows.length;
+}
+
 export async function seedDemoIfEmpty() {
   // Fake HVAC / roofing / dental rows were confusing the live queue.
   // Opt in only: MYA_SEED_DEMO=1

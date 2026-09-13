@@ -11,9 +11,9 @@ import {
   listOrders,
   packetFor,
   passQc,
+  purgeSeedDemoOrders,
   refundOrder,
   remakeOrder,
-  seedDemoIfEmpty,
   slaSnapshot,
 } from "@/lib/orders.server";
 import {
@@ -78,7 +78,7 @@ async function handle(request: Request, splat: string, method: "GET" | "POST") {
       return Response.json({ error: "Not found" }, { status: 404 });
     }
     if (method === "GET" && parts[0] === "sla") {
-      await seedDemoIfEmpty();
+      await purgeSeedDemoOrders();
       return Response.json(await slaSnapshot());
     }
     if (method === "POST" && parts.length === 1 && parts[0] === "sla") {
@@ -94,7 +94,7 @@ async function handle(request: Request, splat: string, method: "GET" | "POST") {
       return Response.json({ ok: true, sent });
     }
     if (method === "GET" && parts[0] === "orders" && parts.length === 1) {
-      await seedDemoIfEmpty();
+      await purgeSeedDemoOrders();
       const url = new URL(request.url);
       const status = url.searchParams.get("status") ?? undefined;
       const orders = await listOrders(status || undefined);

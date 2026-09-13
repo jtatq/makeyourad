@@ -15,9 +15,9 @@ import {
   listOrders,
   packetFor,
   passQc,
+  purgeSeedDemoOrders,
   refundOrder,
   remakeOrder,
-  seedDemoIfEmpty,
   slaSnapshot,
 } from "./orders.server";
 import {
@@ -63,7 +63,7 @@ export const adminSession = createServerFn({ method: "GET" }).handler(async () =
 
 export const adminDashboard = createServerFn({ method: "GET" }).handler(async () => {
   requireAdmin();
-  await seedDemoIfEmpty();
+  await purgeSeedDemoOrders();
   const [orders, sla, emails] = await Promise.all([listOrders(), slaSnapshot(), listOutbound(12)]);
   return {
     orders,
