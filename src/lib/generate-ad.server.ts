@@ -41,6 +41,11 @@ function apiKey(): string | null {
   return process.env.XAI_API_KEY?.trim() || null;
 }
 
+export function aiAvailable(): boolean {
+  return Boolean(apiKey());
+}
+
+
 function slotSeconds(duration: string): number | null {
   if (duration === "still") return null;
   const nums = duration.match(/\d+/g)?.map(Number) ?? [];

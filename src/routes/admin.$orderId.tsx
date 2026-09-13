@@ -51,10 +51,16 @@ function OrderAdminPage() {
       </div>
     );
   }
-  return <Detail detail={detail} />;
+  return <Detail detail={detail} canGenerate={Boolean(session.aiAvailable)} />;
 }
 
-function Detail({ detail }: { detail: Awaited<ReturnType<typeof adminOrder>> }) {
+function Detail({
+  detail,
+  canGenerate,
+}: {
+  detail: Awaited<ReturnType<typeof adminOrder>>;
+  canGenerate: boolean;
+}) {
   const router = useRouter();
   const { order, events, assets, packet, generation } = detail;
   const [filename, setFilename] = useState("ad-9x16.mp4");
@@ -160,6 +166,9 @@ function Detail({ detail }: { detail: Awaited<ReturnType<typeof adminOrder>> }) 
                       src={a.preview_url}
                       alt=""
                       className={`aspect-square w-full ${a.kind === "logo" ? "object-contain bg-surface p-2" : "object-cover"}`}
+                      onError={(e) => {
+                        e.currentTarget.style.visibility = "hidden";
+                      }}
                     />
                   ) : null}
                   <p className="truncate px-2 py-1.5">
@@ -185,9 +194,15 @@ function Detail({ detail }: { detail: Awaited<ReturnType<typeof adminOrder>> }) 
               Builds each recipe slot from the packet. Stills first, then motion. Uses the customer’s photos when we have them.
             </p>
             {generation?.error ? <p className="mt-2 text-sm text-danger">{generation.error}</p> : null}
+            {!canGenerate ? (
+              <p className="mt-2 text-sm text-danger">
+                This live copy doesn’t have the image engine attached, so Generate is off here.
+              </p>
+            ) : null}
+            {error && busy === "generate" ? <p className="mt-2 text-sm text-danger">{error}</p> : null}
             <div className="mt-4 flex flex-col gap-2">
               <Button
-                disabled={busy !== null || generating}
+                disabled={!canGenerate || busy !== null || generating}
                 onClick={() =>
                   void run("generate", () =>
                     adminGenerate({

@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { getRequest, setResponseHeader } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { listOutbound, sendSlaDigest } from "./email.server";
-import { loadGeneration, tickGeneration } from "./generate-ad.server";
+import { aiAvailable, loadGeneration, tickGeneration } from "./generate-ad.server";
 import {
   attachFiles,
   claimOrder,
@@ -54,6 +54,7 @@ export const adminSession = createServerFn({ method: "GET" }).handler(async () =
   return {
     ok: readOperatorCookie(request) || previewAdminOpen(),
     previewHint: isPreviewOperatorSecret() ? "makeyourad-operator" : null,
+    aiAvailable: aiAvailable(),
   };
 });
 
@@ -90,9 +91,13 @@ export const adminOrder = createServerFn({ method: "GET" })
         hasData: Boolean(a.data_url),
         external_url: a.external_url,
         preview_url:
-          a.mime.startsWith("image/") || a.mime.startsWith("video/")
-            ? a.external_url || signedFileUrl(origin, a.id, 1)
-            : null,
+          a.external_url && /^https?:\/\//.test(a.external_url)
+            ? a.external_url
+            : a.data_url && a.data_url.startsWith("data:") && a.data_url.length < 1_500_000
+              ? a.data_url
+              : a.mime.startsWith("image/") || a.mime.startsWith("video/")
+                ? signedFileUrl(origin, a.id, 1)
+                : null,
       })),
       packet,
     };
