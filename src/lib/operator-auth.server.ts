@@ -7,6 +7,11 @@ export function operatorToken(): string {
   return env("OPERATOR_TOKEN") ?? env("ADMIN_PASSWORD") ?? "makeyourad-operator";
 }
 
+/** SuperGrok Imagine worker. Separate from the operator password so Grok can fulfill jobs. */
+export function imagineWorkerToken(): string {
+  return env("IMAGINE_WORKER_TOKEN") ?? "mya-imagine-supergrok";
+}
+
 export function operatorEmail(): string {
   return env("OPERATOR_EMAIL") ?? "operator@makeyourad.com";
 }
@@ -96,6 +101,13 @@ export function requestIsOperator(request: Request): boolean {
   if (tokenMatches(bearerFrom(request))) return true;
   if (readOperatorCookie(request)) return true;
   return false;
+}
+
+export function requestIsImagineWorker(request: Request): boolean {
+  if (requestIsOperator(request)) return true;
+  const candidate = bearerFrom(request);
+  if (!candidate) return false;
+  return safeEqual(sign(candidate), sign(imagineWorkerToken()));
 }
 
 export function unauthorizedJson(): Response {

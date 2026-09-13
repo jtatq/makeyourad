@@ -13,6 +13,7 @@ TanStack Start, TypeScript, Tailwind, Postgres (Neon in production, embedded PGL
 | Var | Required | Purpose |
 | --- | --- | --- |
 | `OPERATOR_TOKEN` | production | Bearer token for `/api/operator/*` and the admin queue password. Preview falls back to `makeyourad-operator`. |
+| `IMAGINE_WORKER_TOKEN` | optional | SuperGrok Imagine worker. Defaults to `mya-imagine-supergrok` so this account can fulfill Generate jobs. |
 | `OPERATOR_EMAIL` | recommended | Inbox for paid-order notices and the daily SLA digest. |
 | `STRIPE_SECRET_KEY` | production | Enables Stripe Checkout. Without it, preview uses a demo pay step that still creates a `paid` order server-side. |
 | `STRIPE_WEBHOOK_SECRET` | production | Verifies `checkout.session.completed`. The webhook is the source of truth for paid orders. |

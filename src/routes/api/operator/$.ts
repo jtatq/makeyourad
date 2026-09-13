@@ -22,7 +22,7 @@ import {
   listImagineQueue,
   tickGeneration,
 } from "@/lib/generate-ad.server";
-import { requestIsOperator, requestOrigin, unauthorizedJson } from "@/lib/operator-auth.server";
+import { requestIsImagineWorker, requestIsOperator, requestOrigin, unauthorizedJson } from "@/lib/operator-auth.server";
 
 export const Route = createFileRoute("/api/operator/$")({
   server: {
@@ -34,8 +34,12 @@ export const Route = createFileRoute("/api/operator/$")({
 });
 
 async function handle(request: Request, splat: string, method: "GET" | "POST") {
-  if (!requestIsOperator(request)) return unauthorizedJson();
   const parts = splat.split("/").filter(Boolean);
+  if (parts[0] === "imagine") {
+    if (!requestIsImagineWorker(request)) return unauthorizedJson();
+  } else if (!requestIsOperator(request)) {
+    return unauthorizedJson();
+  }
 
   try {
     if (parts[0] === "imagine") {

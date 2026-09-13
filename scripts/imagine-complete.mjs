@@ -26,7 +26,7 @@ function runFfmpeg(args) {
 }
 
 const host = arg("host").replace(/\/$/, "");
-const token = arg("token", process.env.OPERATOR_TOKEN || "makeyourad-operator");
+const token = arg("token", process.env.IMAGINE_WORKER_TOKEN || process.env.OPERATOR_TOKEN || "mya-imagine-supergrok");
 const orderId = arg("order");
 const slotId = arg("slot");
 const kind = arg("kind", "still") === "video" ? "video" : "still";
