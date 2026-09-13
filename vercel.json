@@ -6,7 +6,7 @@
   "outputDirectory": ".vercel/output",
   "functions": {
     "__server": {
-      "maxDuration": 60
+      "maxDuration": 300
     }
   }
 }

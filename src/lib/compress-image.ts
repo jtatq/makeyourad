@@ -25,7 +25,7 @@ export async function fileToDataUrl(
     ctx.drawImage(bitmap, 0, 0, width, height);
     const mime = "image/jpeg";
     const dataUrl = canvas.toDataURL(mime, quality);
-    const filename = file.name.replace(/\.[^.]+$/, "") + ".jpg";
+    const filename = file.name.replace(/\.[^.]+$/, "").replace(/[^\x20-\x7E]/g, " ").trim() + ".jpg";
     if (dataUrl.length > 2_400_000) {
       return fileToDataUrl(file, Math.round(maxEdge * 0.8), Math.max(0.55, quality - 0.1));
     }
@@ -33,6 +33,6 @@ export async function fileToDataUrl(
   } catch {
     const dataUrl = await readAsDataUrl(file);
     if (dataUrl.length > 2_400_000) throw new Error("That photo is too large. Try a smaller one.");
-    return { filename: file.name, mime: file.type || "image/jpeg", dataUrl };
+    return { filename: file.name.replace(/[^\x20-\x7E]/g, " ").trim() || "photo.jpg", mime: file.type || "image/jpeg", dataUrl };
   }
 }

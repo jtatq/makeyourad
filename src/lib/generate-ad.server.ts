@@ -45,16 +45,11 @@ export function aiAvailable(): boolean {
   return Boolean(apiKey());
 }
 
-
 function slotSeconds(duration: string): number | null {
   if (duration === "still") return null;
   const nums = duration.match(/\d+/g)?.map(Number) ?? [];
   if (nums.length === 0) return 6;
   return Math.min(15, Math.max(4, Math.max(...nums)));
-}
-
-function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
 }
 
 function packetFromOrder(order: OrderRow, assets: Awaited<ReturnType<typeof listAssets>>): GenerationPacket {
@@ -313,15 +308,29 @@ async function attachGen(
   mime: string,
   kind: "still" | "delivery",
 ) {
+  let dataUrl: string | null = null;
+  if (kind === "still" || mime.startsWith("image/")) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length > 0 && buf.length < 2_800_000) {
+          dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
+        }
+      }
+    } catch {
+      dataUrl = null;
+    }
+  }
   if (kind === "delivery") {
-    await attachFiles(orderId, [{ filename, url, mime }], "grok");
+    await attachFiles(orderId, [{ filename, url, mime, dataUrl: dataUrl ?? undefined }], "grok");
     return;
   }
   const sql = await getSql();
   await sql.query(
     `insert into order_assets (id, order_id, kind, filename, mime, data_url, external_url)
-     values ($1,$2,$3,$4,$5,null,$6)`,
-    [makeId("ast"), orderId, kind, filename, mime, url],
+     values ($1,$2,$3,$4,$5,$6,$7)`,
+    [makeId("ast"), orderId, kind, filename, mime, dataUrl, url],
   );
 }
 
@@ -382,7 +391,7 @@ export async function tickGeneration(
   }
 
   try {
-    if (slot.status === "queued") {
+    if (slot.status === "queued" || (slot.status === "still" && !slot.stillUrl)) {
       slot.status = "still";
       await saveGeneration(orderId, job);
       const ref = await referenceUri(orderId, slot.id === "end_card" || slot.id === "static");
@@ -392,16 +401,20 @@ export async function tickGeneration(
       if (!slot.duration) {
         slot.status = "done";
         await appendEvent(orderId, "generate", `Still ready · ${slot.label}.`, "grok");
+      }
+    } else if (slot.status === "still" && slot.stillUrl) {
+      if (!slot.duration) {
+        slot.status = "done";
       } else {
-        const vidId = await startVideo(motionPrompt(recipeSlot, slot.duration, order.tone), url, slot.duration);
+        const vidId = await startVideo(
+          motionPrompt(recipeSlot, slot.duration, order.tone),
+          slot.stillUrl,
+          slot.duration,
+        );
         slot.videoRequestId = vidId;
         slot.status = "video";
         await appendEvent(orderId, "generate", `Animating ${slot.label} (${slot.duration}s).`, "grok");
       }
-    } else if (slot.status === "still" && slot.duration && slot.stillUrl) {
-      const vidId = await startVideo(motionPrompt(recipeSlot, slot.duration, order.tone), slot.stillUrl, slot.duration);
-      slot.videoRequestId = vidId;
-      slot.status = "video";
     } else if (slot.status === "video") {
       if (!slot.videoRequestId) {
         if (!slot.stillUrl) throw new Error("Missing still for video");
@@ -411,14 +424,9 @@ export async function tickGeneration(
           slot.duration ?? 6,
         );
       } else {
-        let last = { status: "pending", url: null as string | null };
-        for (let i = 0; i < 3; i++) {
-          last = await pollVideo(slot.videoRequestId);
-          if (last.status === "done" && last.url) break;
-          if (last.status === "failed" || last.status === "expired") break;
-          await sleep(4000);
-        }
-        if (last.status === "done" && last.url) {
+        const last = await pollVideo(slot.videoRequestId);
+        const done = last.status === "done" || last.status === "completed" || last.status === "succeeded";
+        if (done && last.url) {
           slot.videoUrl = last.url;
           slot.status = "done";
           await attachGen(orderId, `${slot.id}-gen.mp4`, last.url, "video/mp4", "delivery");

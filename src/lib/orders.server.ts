@@ -4,6 +4,7 @@ import {
   sendOperatorPaidNotice,
   sendOrderConfirmation,
 } from "./email.server";
+import { safeFilename, safeMime } from "./filename";
 import { makeId } from "./ids";
 import { asIso, asNumber, parseJsonArray, parseJsonObject } from "./json";
 import {
@@ -189,7 +190,7 @@ export async function insertCheckout(input: CheckoutInput): Promise<{ id: string
     await sql.query(
       `insert into order_assets (id, checkout_id, kind, filename, mime, data_url)
        values ($1,$2,$3,$4,$5,$6)`,
-      [makeId("ast"), id, asset.kind === "logo" ? "logo" : "upload", asset.filename, asset.mime, asset.dataUrl],
+      [makeId("ast"), id, asset.kind === "logo" ? "logo" : "upload", safeFilename(asset.filename), safeMime(asset.mime, "image/jpeg"), asset.dataUrl],
     );
   }
   return { id, priceCents };
@@ -402,8 +403,8 @@ export async function attachFiles(
       [
         makeId("ast"),
         id,
-        file.filename,
-        file.mime || "application/octet-stream",
+        safeFilename(file.filename),
+        safeMime(file.mime || "application/octet-stream"),
         file.dataUrl ?? null,
         file.url ?? null,
       ],

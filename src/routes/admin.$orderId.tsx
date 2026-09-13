@@ -89,7 +89,7 @@ function Detail({
     if (generation?.status !== "running") return;
     const t = window.setTimeout(() => {
       void run("generate", () => adminGenerate({ data: { id: order.id, action: "tick" } }));
-    }, 1200);
+    }, 2800);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [generation?.status, generation?.updatedAt, order.id]);

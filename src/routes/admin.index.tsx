@@ -60,7 +60,7 @@ function QueuePage() {
         ) : null}
         {!dashboard.aiAvailable ? (
           <div className="mb-4 rounded-md bg-warn px-4 py-3 text-sm text-fg">
-            Generate is off on this host. Add XAI_API_KEY in Environment Variables and Redeploy.
+            Generate is off on this host. In Vercel → make-your-ad → Settings → Environment Variables, add XAI_API_KEY for Production, then Redeploy.
           </div>
         ) : null}
         {sla.critical_20h.length > 0 ? (
