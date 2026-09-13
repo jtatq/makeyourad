@@ -70,6 +70,7 @@ export const adminDashboard = createServerFn({ method: "GET" }).handler(async ()
     sla,
     emails,
     durable: dbSource === "neon",
+    preview: isWorkspacePreview(),
     aiAvailable: aiAvailable(),
     generationEngine: generationEngine(),
   };

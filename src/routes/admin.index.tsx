@@ -54,9 +54,20 @@ function QueuePage() {
       </header>
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
         {!dashboard.durable ? (
-          <div className="mb-4 rounded-md bg-danger px-4 py-3 text-sm text-fg">
-            Orders are not saving yet. In Vercel go to Storage, create Neon Postgres, connect it to this project, then Redeploy.
-          </div>
+          dashboard.preview ? (
+            <div className="mb-4 rounded-md bg-elevated px-4 py-3 text-sm text-muted">
+              This is the Grok preview. It resets and is not the live queue. Open{" "}
+              <a href="https://makeyourad.com/admin" className="text-primary underline">
+                makeyourad.com/admin
+              </a>
+              .
+            </div>
+          ) : (
+            <div className="mb-4 rounded-md bg-danger px-4 py-3 text-sm text-fg">
+              Orders are not saving yet. In Vercel go to Storage, create Neon Postgres, connect it to this
+              project, then Redeploy.
+            </div>
+          )
         ) : null}
         {dashboard.generationEngine === "imagine" ? (
           <div className="mb-4 rounded-md bg-elevated px-4 py-3 text-sm text-muted">

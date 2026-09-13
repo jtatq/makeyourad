@@ -51,6 +51,7 @@ export type OrderRow = {
   qc_passed_at: string | null;
   delivered_at: string | null;
   attention_note: string | null;
+  featured_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -64,7 +65,7 @@ export type EventRow = {
   created_at: string;
 };
 
-type OrderSql = {
+export type OrderSql = {
   id: string;
   checkout_id: string | null;
   product: string;
@@ -88,6 +89,7 @@ type OrderSql = {
   qc_passed_at: string | Date | null;
   delivered_at: string | Date | null;
   attention_note: string | null;
+  featured_at: string | Date | null;
   created_at: string | Date;
   updated_at: string | Date;
 };
@@ -135,6 +137,7 @@ export function mapOrder(row: OrderSql): OrderRow {
     qc_passed_at: asIso(row.qc_passed_at),
     delivered_at: asIso(row.delivered_at),
     attention_note: row.attention_note,
+    featured_at: asIso(row.featured_at),
     created_at: asIso(row.created_at) ?? new Date().toISOString(),
     updated_at: asIso(row.updated_at) ?? new Date().toISOString(),
   };
@@ -471,6 +474,12 @@ export async function deliverOrder(id: string, origin: string, actor = "operator
     [id],
   );
   await appendEvent(id, "delivered", `Delivery email sent to ${order.email}.`, actor);
+  try {
+    const { maybeFeatureOnDeliver } = await import("./featured");
+    await maybeFeatureOnDeliver(id, actor);
+  } catch {
+    // Homepage feature is optional; delivery still succeeded.
+  }
   const next = await getOrder(id);
   if (!next) throw new Error("Order not found");
   return next;
@@ -579,6 +588,9 @@ export async function joinWaitlist(opts: {
 }
 
 export async function seedDemoIfEmpty() {
+  // Fake HVAC / roofing / dental rows were confusing the live queue.
+  // Opt in only: MYA_SEED_DEMO=1
+  if (process.env.MYA_SEED_DEMO !== "1") return;
   if (typeof process !== "undefined" && process.env.VERCEL) return;
   const sql = await getSql();
   const rows = await sql.query<{ n: number }>(`select count(*)::int as n from orders`);
