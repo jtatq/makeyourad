@@ -105,13 +105,51 @@ function createNeonSql(): Promise<Sql> {
   return globalRef.__pgSqlPromise__;
 }
 
+/** Load pglite.data as a Blob so Vercel doesn't have to open it from disk. */
+async function loadPgliteFsBundle(): Promise<Blob | undefined> {
+  const { readFile } = await import("node:fs/promises");
+  const { dirname, join } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const { createRequire } = await import("node:module");
+  const candidates: string[] = [];
+  try {
+    candidates.push(
+      createRequire(import.meta.url).resolve("@electric-sql/pglite/dist/pglite.data"),
+    );
+  } catch {
+    /* bundled builds may not have the package */
+  }
+  try {
+    candidates.push(join(dirname(fileURLToPath(import.meta.url)), "pglite.data"));
+  } catch {
+    /* data: import.meta.url */
+  }
+  candidates.push(
+    join(process.cwd(), "_libs", "pglite.data"),
+    join(process.cwd(), "pglite.data"),
+    "/var/task/_libs/pglite.data",
+    "/var/task/pglite.data",
+  );
+  for (const path of candidates) {
+    try {
+      const buf = await readFile(path);
+      return new Blob([buf]);
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
 async function createPgliteSql(): Promise<Sql> {
   // Embedded Postgres, imported on demand so it never loads on the Neon path.
   // One in-memory instance per process, shared across HMR module instances, so
   // data survives source edits (it resets on dev-server restart).
   globalRef.__pgliteInstance__ ??= (async () => {
     const { PGlite } = await import("@electric-sql/pglite");
+    const fsBundle = await loadPgliteFsBundle();
     const pg = new PGlite({
+      ...(fsBundle ? { fsBundle } : {}),
       parsers: {
         [OID_INT8]: Number,
         [OID_DATE]: identity,
