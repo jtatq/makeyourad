@@ -1,16 +1,21 @@
 import { getSql } from "./db";
+import { env } from "./env.server";
 import { makeId } from "./ids";
+import { signedFileUrl } from "./operator-auth.server";
 import {
   appendEvent,
-  attachFiles,
   claimOrder,
   getOrder,
   listAssets,
+  listOrders,
   type OrderRow,
 } from "./orders.server";
 import { buildPacket, type GenerationPacket } from "./prompts/compiler";
+import { TONE_PACKS } from "./prompts/tones";
 import type { SlotId } from "./recipe";
+import type { Tone } from "./products";
 
+export type GenEngine = "imagine" | "xai";
 export type GenSlotStatus = "queued" | "still" | "video" | "done" | "error";
 
 export type GenSlotState = {
@@ -21,27 +26,54 @@ export type GenSlotState = {
   stillUrl?: string;
   videoUrl?: string;
   videoRequestId?: string;
+  stillPrompt?: string;
+  motionPrompt?: string;
+  claimedAt?: string;
   error?: string;
 };
 
 export type GenerationJob = {
   status: "idle" | "running" | "done" | "error";
+  engine: GenEngine;
   startedAt: string;
   updatedAt: string;
   error?: string;
   slots: GenSlotState[];
 };
 
+export type ImagineWork = {
+  orderId: string;
+  businessName: string;
+  slotId: SlotId;
+  label: string;
+  phase: "still" | "video";
+  duration: 6 | 10 | 15 | null;
+  aspectRatio: "9:16" | "1:1" | "16:9";
+  stillPrompt: string;
+  motionPrompt: string;
+  stillUrl?: string;
+  references: Array<{ url: string; kind: string; filename: string }>;
+};
+
 const IMAGE_MODEL = "grok-imagine-image-2.0";
 const VIDEO_MODEL = "grok-imagine-video-1.5";
 const XAI = "https://api.x.ai/v1";
 const MAX_DATA_URI = 3_500_000;
+const CLAIM_MS = 8 * 60 * 1000;
 
 function apiKey(): string | null {
   return process.env.XAI_API_KEY?.trim() || null;
 }
 
+/** SuperGrok Imagine is the default. Set GENERATION_ENGINE=xai to use the REST key. */
+export function generationEngine(): GenEngine {
+  const forced = env("GENERATION_ENGINE");
+  if (forced === "xai") return "xai";
+  return "imagine";
+}
+
 export function aiAvailable(): boolean {
+  if (generationEngine() === "imagine") return true;
   return Boolean(apiKey());
 }
 
@@ -50,6 +82,21 @@ function slotSeconds(duration: string): number | null {
   const nums = duration.match(/\d+/g)?.map(Number) ?? [];
   if (nums.length === 0) return 6;
   return Math.min(15, Math.max(4, Math.max(...nums)));
+}
+
+function imagineSeconds(duration: string): 6 | 10 | 15 | null {
+  const n = slotSeconds(duration);
+  if (n == null) return null;
+  if (n <= 6) return 6;
+  if (n <= 10) return 10;
+  return 15;
+}
+
+function asImagineDuration(n: number | null | undefined): 6 | 10 | 15 | null {
+  if (n == null) return null;
+  if (n <= 6) return 6;
+  if (n <= 10) return 10;
+  return 15;
 }
 
 function packetFromOrder(order: OrderRow, assets: Awaited<ReturnType<typeof listAssets>>): GenerationPacket {
@@ -95,19 +142,31 @@ async function ensureGenerationColumn() {
   await generationColumnReady;
 }
 
+function parseJob(raw: unknown): GenerationJob | null {
+  if (!raw) return null;
+  try {
+    const job = (typeof raw === "string" ? JSON.parse(raw) : raw) as GenerationJob;
+    if (!job || !Array.isArray(job.slots)) return null;
+    if (!job.engine) {
+      const hasExternal = job.slots.some((s) => {
+        const u = s.stillUrl || s.videoUrl || "";
+        return /^https?:\/\//.test(u);
+      });
+      job.engine = hasExternal ? "xai" : generationEngine();
+    }
+    return job;
+  } catch {
+    return null;
+  }
+}
+
 export async function loadGeneration(orderId: string): Promise<GenerationJob | null> {
   await ensureGenerationColumn();
   const sql = await getSql();
   const rows = await sql.query<{ generation: string | null }>(`select generation from orders where id = $1`, [
     orderId,
   ]);
-  const raw = rows[0]?.generation;
-  if (!raw) return null;
-  try {
-    return typeof raw === "string" ? (JSON.parse(raw) as GenerationJob) : (raw as GenerationJob);
-  } catch {
-    return null;
-  }
+  return parseJob(rows[0]?.generation);
 }
 
 async function saveGeneration(orderId: string, job: GenerationJob) {
@@ -181,6 +240,46 @@ function motionPrompt(slot: GenerationPacket["recipe"]["slots"][number], seconds
     slot.role,
     `Tone: ${tone}. Slow, confident camera. Keep type readable if present.`,
     `Photoreal, no morphing logos, no extra text, no watermarks.`,
+    `Hard stop at ${seconds} seconds.`,
+  ].join(" ");
+}
+
+function imagineStillPrompt(
+  packet: GenerationPacket,
+  slot: GenerationPacket["recipe"]["slots"][number],
+  ratio: string,
+) {
+  const i = packet.intake;
+  const site = packet.website_profile;
+  const tone = TONE_PACKS[i.tone];
+  const parts = [
+    `A photoreal ${ratio} advertisement still for ${i.businessName}, a ${i.category_label} in ${i.city}, ${i.state}.`,
+    `This frame is the ${slot.label.toLowerCase()}: ${slot.role}`,
+    `The look is ${i.tone}: ${tone.picture}`,
+  ];
+  if (i.brief.trim()) parts.push(`Customer direction: ${i.brief.trim()}`);
+  if (site?.tagline) parts.push(`Their line: ${site.tagline}.`);
+  if (site?.services?.length) parts.push(`Services: ${site.services.slice(0, 5).join(", ")}.`);
+  if (site?.about) parts.push(site.about.slice(0, 220));
+  if (slot.id === "end_card" || slot.id === "static") {
+    parts.push(
+      `Put clean readable type on screen: ${i.businessName}. ${i.city}, ${i.state}. ${i.phone}. ${site?.cta || "Call today"}.`,
+    );
+  }
+  if (slot.id === "hook") parts.push("Open on the problem or the promise. No logo yet.");
+  if (slot.id === "mascot" && i.mascotDescription) parts.push(`Mascot: ${i.mascotDescription}`);
+  parts.push("Use the real business. No celebrity, no watermark, no UI chrome, no agency slogan.");
+  return parts.join(" ");
+}
+
+function imagineMotionPrompt(slot: GenerationPacket["recipe"]["slots"][number], seconds: number, tone: Tone) {
+  const pack = TONE_PACKS[tone];
+  return [
+    `Animate this advertisement frame as a ${seconds}-second ${slot.label.toLowerCase()} clip.`,
+    slot.role,
+    pack.picture,
+    "Slow, confident camera, subject stays recognizable, type stays readable.",
+    "Photoreal, no morphing logos, no extra text, no watermarks.",
     `Hard stop at ${seconds} seconds.`,
   ].join(" ");
 }
@@ -273,18 +372,30 @@ async function clearGenFiles(orderId: string) {
   );
 }
 
-function initJob(packet: GenerationPacket): GenerationJob {
+function initJob(packet: GenerationPacket, engine: GenEngine): GenerationJob {
   const now = new Date().toISOString();
+  const ratio = packet.aspect_ratio_priority[0] ?? "9:16";
   return {
     status: "running",
+    engine,
     startedAt: now,
     updatedAt: now,
-    slots: packet.recipe.slots.map((s) => ({
-      id: s.id,
-      label: s.label,
-      duration: slotSeconds(s.duration),
-      status: "queued",
-    })),
+    slots: packet.recipe.slots.map((s) => {
+      const duration = engine === "imagine" ? imagineSeconds(s.duration) : slotSeconds(s.duration);
+      return {
+        id: s.id,
+        label: s.label,
+        duration,
+        status: "queued" as const,
+        stillPrompt: engine === "imagine" ? imagineStillPrompt(packet, s, ratio) : stillPrompt(packet, s, ratio),
+        motionPrompt:
+          duration != null
+            ? engine === "imagine"
+              ? imagineMotionPrompt(s, duration, packet.intake.tone)
+              : motionPrompt(s, duration, packet.intake.tone)
+            : undefined,
+      };
+    }),
   };
 }
 
@@ -304,12 +415,14 @@ function finishIfDone(job: GenerationJob) {
 async function attachGen(
   orderId: string,
   filename: string,
-  url: string,
+  url: string | null,
   mime: string,
   kind: "still" | "delivery",
-) {
-  let dataUrl: string | null = null;
-  if (kind === "still" || mime.startsWith("image/")) {
+  providedDataUrl?: string,
+): Promise<{ id: string }> {
+  const id = makeId("ast");
+  let dataUrl: string | null = providedDataUrl ?? null;
+  if (!dataUrl && url && (kind === "still" || mime.startsWith("image/"))) {
     try {
       const res = await fetch(url);
       if (res.ok) {
@@ -322,23 +435,166 @@ async function attachGen(
       dataUrl = null;
     }
   }
-  if (kind === "delivery") {
-    await attachFiles(orderId, [{ filename, url, mime, dataUrl: dataUrl ?? undefined }], "grok");
-    return;
-  }
   const sql = await getSql();
   await sql.query(
     `insert into order_assets (id, order_id, kind, filename, mime, data_url, external_url)
      values ($1,$2,$3,$4,$5,$6,$7)`,
-    [makeId("ast"), orderId, kind, filename, mime, dataUrl, url],
+    [id, orderId, kind, filename, mime, dataUrl, url],
   );
+  return { id };
+}
+
+function assetViewUrl(origin: string, assetId: string, dataUrl: string | null | undefined): string {
+  if (dataUrl && dataUrl.startsWith("data:") && dataUrl.length < 1_500_000) return dataUrl;
+  return signedFileUrl(origin, assetId, 30);
+}
+
+function claimIsFresh(slot: GenSlotState): boolean {
+  if (!slot.claimedAt) return false;
+  const t = Date.parse(slot.claimedAt);
+  return Number.isFinite(t) && Date.now() - t < CLAIM_MS;
+}
+
+function slotPhase(slot: GenSlotState): "still" | "video" | null {
+  if (slot.status === "done" || slot.status === "error") return null;
+  if (slot.status === "queued" || (slot.status === "still" && !slot.stillUrl)) return "still";
+  if (slot.duration && !slot.videoUrl) return "video";
+  return null;
+}
+
+export async function listImagineQueue(): Promise<Array<{ orderId: string; businessName: string; job: GenerationJob }>> {
+  await ensureGenerationColumn();
+  const orders = await listOrders();
+  const out: Array<{ orderId: string; businessName: string; job: GenerationJob }> = [];
+  for (const order of orders) {
+    const job = await loadGeneration(order.id);
+    if (job?.status === "running" && (job.engine ?? "imagine") === "imagine") {
+      out.push({ orderId: order.id, businessName: order.business_name, job });
+    }
+  }
+  return out;
+}
+
+async function referencePayload(orderId: string, origin: string): Promise<ImagineWork["references"]> {
+  const assets = await listAssets({ orderId });
+  const usable = assets.filter((a) => a.kind === "logo" || a.kind === "upload");
+  const refs: ImagineWork["references"] = [];
+  for (const a of usable.slice(0, 3)) {
+    const url =
+      a.external_url && /^https?:\/\//.test(a.external_url) && !a.external_url.includes("127.0.0.1")
+        ? a.external_url
+        : signedFileUrl(origin, a.id, 2);
+    refs.push({ url, kind: a.kind, filename: a.filename });
+  }
+  return refs;
+}
+
+export async function claimNextImagineWork(origin: string): Promise<ImagineWork | null> {
+  const queue = await listImagineQueue();
+  for (const item of queue) {
+    const slot = item.job.slots.find((s) => slotPhase(s) && !claimIsFresh(s));
+    if (!slot) continue;
+    const phase = slotPhase(slot);
+    if (!phase) continue;
+    slot.claimedAt = new Date().toISOString();
+    slot.status = phase === "still" ? "still" : "video";
+    slot.error = undefined;
+    await saveGeneration(item.orderId, item.job);
+    const order = await getOrder(item.orderId);
+    const platforms = order?.platforms ?? [];
+    const aspectRatio: ImagineWork["aspectRatio"] =
+      platforms.includes("youtube") && !platforms.includes("instagram") && !platforms.includes("tiktok")
+        ? "16:9"
+        : "9:16";
+    return {
+      orderId: item.orderId,
+      businessName: item.businessName,
+      slotId: slot.id,
+      label: slot.label,
+      phase,
+      duration: asImagineDuration(slot.duration),
+      aspectRatio,
+      stillPrompt: slot.stillPrompt || `${item.businessName} advertisement still, ${slot.label}`,
+      motionPrompt: slot.motionPrompt || `Animate this ${slot.label.toLowerCase()} advertisement frame.`,
+      stillUrl: slot.stillUrl,
+      references: await referencePayload(item.orderId, origin),
+    };
+  }
+  return null;
+}
+
+export async function completeImagineSlot(opts: {
+  orderId: string;
+  slotId: string;
+  kind: "still" | "video";
+  filename: string;
+  mime: string;
+  dataUrl?: string;
+  url?: string;
+  origin: string;
+}): Promise<{ job: GenerationJob; order: OrderRow }> {
+  const order = await getOrder(opts.orderId);
+  if (!order) throw new Error("Order not found");
+  const job = await loadGeneration(opts.orderId);
+  if (!job) throw new Error("No generation in progress");
+  const slot = job.slots.find((s) => s.id === opts.slotId);
+  if (!slot) throw new Error("Unknown slot");
+  if (!opts.dataUrl && !opts.url) throw new Error("Provide dataUrl or url");
+
+  const filename = opts.filename.replace(/[^\w.\-]+/g, "-").slice(0, 120) || `${slot.id}-gen.bin`;
+  const mime = opts.mime || (opts.kind === "video" ? "video/mp4" : "image/jpeg");
+
+  if (opts.kind === "still") {
+    const attached = await attachGen(
+      opts.orderId,
+      filename.endsWith(".jpg") || filename.endsWith(".png") || filename.endsWith(".webp")
+        ? filename
+        : `${slot.id}-gen.jpg`,
+      opts.url ?? null,
+      mime,
+      slot.duration ? "still" : "delivery",
+      opts.dataUrl,
+    );
+    slot.stillUrl = assetViewUrl(opts.origin, attached.id, opts.dataUrl);
+    slot.claimedAt = undefined;
+    slot.error = undefined;
+    if (!slot.duration) {
+      slot.status = "done";
+      await appendEvent(opts.orderId, "generate", `Still ready · ${slot.label}.`, "grok");
+    } else {
+      slot.status = "still";
+      await appendEvent(opts.orderId, "generate", `Still ready · ${slot.label}. Animating next.`, "grok");
+    }
+  } else {
+    const attached = await attachGen(
+      opts.orderId,
+      filename.endsWith(".mp4") ? filename : `${slot.id}-gen.mp4`,
+      opts.url ?? null,
+      mime,
+      "delivery",
+      opts.dataUrl,
+    );
+    slot.videoUrl = assetViewUrl(opts.origin, attached.id, opts.dataUrl);
+    slot.status = "done";
+    slot.claimedAt = undefined;
+    slot.error = undefined;
+    await appendEvent(opts.orderId, "generate", `Clip ready · ${slot.label}.`, "grok");
+  }
+
+  finishIfDone(job);
+  if (job.status === "done") {
+    await appendEvent(opts.orderId, "generate", "All slots generated. QC next.", "grok");
+  }
+  await saveGeneration(opts.orderId, job);
+  return { job, order: (await getOrder(opts.orderId))! };
 }
 
 export async function tickGeneration(
   orderId: string,
   opts: { action: "start" | "tick"; force?: boolean },
 ): Promise<{ job: GenerationJob; order: OrderRow }> {
-  if (!apiKey()) {
+  const engine = generationEngine();
+  if (engine === "xai" && !apiKey()) {
     throw new Error("AI is not available in this environment");
   }
   let order = await getOrder(orderId);
@@ -351,7 +607,7 @@ export async function tickGeneration(
 
   if (opts.action === "start") {
     if (job?.status === "running" && !opts.force) {
-      // fall through and tick
+      // fall through
     } else {
       if (order.status === "paid") {
         order = await claimOrder(orderId, "grok");
@@ -359,15 +615,27 @@ export async function tickGeneration(
       const assets = (await listAssets({ orderId })).filter((a) => a.kind !== "delivery" && a.kind !== "still");
       const packet = packetFromOrder(order, assets);
       await clearGenFiles(orderId);
-      job = initJob(packet);
+      job = initJob(packet, engine);
       await saveGeneration(orderId, job);
-      await appendEvent(orderId, "generate", `Started generation · ${job.slots.length} slots.`, "grok");
+      const via = engine === "imagine" ? "SuperGrok Imagine" : "xAI API";
+      await appendEvent(orderId, "generate", `Started generation · ${job.slots.length} slots · ${via}.`, "grok");
     }
   }
 
   if (!job) throw new Error("No generation in progress");
   if (job.status === "done" && opts.action === "tick") {
     return { job, order: (await getOrder(orderId))! };
+  }
+
+  const activeEngine = job.engine ?? engine;
+  if (activeEngine === "imagine") {
+    finishIfDone(job);
+    await saveGeneration(orderId, job);
+    return { job, order: (await getOrder(orderId))! };
+  }
+
+  if (!apiKey()) {
+    throw new Error("AI is not available in this environment");
   }
 
   const packetAssets = (await listAssets({ orderId })).filter((a) => a.kind !== "delivery" && a.kind !== "still");

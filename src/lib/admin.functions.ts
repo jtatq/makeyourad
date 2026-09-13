@@ -3,7 +3,7 @@ import { getRequest, setResponseHeader } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { listOutbound, sendSlaDigest } from "./email.server";
 import { dbSource } from "./db";
-import { aiAvailable, loadGeneration, tickGeneration } from "./generate-ad.server";
+import { aiAvailable, generationEngine, loadGeneration, tickGeneration } from "./generate-ad.server";
 import {
   attachFiles,
   claimOrder,
@@ -57,6 +57,7 @@ export const adminSession = createServerFn({ method: "GET" }).handler(async () =
     ok: readOperatorCookie(request) || previewAdminOpen(),
     previewHint: isWorkspacePreview() && isPreviewOperatorSecret() ? "makeyourad-operator" : null,
     aiAvailable: aiAvailable(),
+    generationEngine: generationEngine(),
   };
 });
 
@@ -70,6 +71,7 @@ export const adminDashboard = createServerFn({ method: "GET" }).handler(async ()
     emails,
     durable: dbSource === "neon",
     aiAvailable: aiAvailable(),
+    generationEngine: generationEngine(),
   };
 });
 

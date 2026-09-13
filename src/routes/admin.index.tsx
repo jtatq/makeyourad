@@ -58,9 +58,13 @@ function QueuePage() {
             Orders are not saving yet. In Vercel go to Storage, create Neon Postgres, connect it to this project, then Redeploy.
           </div>
         ) : null}
-        {!dashboard.aiAvailable ? (
+        {dashboard.generationEngine === "imagine" ? (
+          <div className="mb-4 rounded-md bg-elevated px-4 py-3 text-sm text-muted">
+            Ads generate through SuperGrok Imagine on this account. Open an order and click Generate ad.
+          </div>
+        ) : !dashboard.aiAvailable ? (
           <div className="mb-4 rounded-md bg-warn px-4 py-3 text-sm text-fg">
-            Generate is off on this host. In Vercel → make-your-ad → Settings → Environment Variables, add XAI_API_KEY for Production, then Redeploy.
+            Generate is off on this host. Add an image engine, then Redeploy.
           </div>
         ) : null}
         {sla.critical_20h.length > 0 ? (

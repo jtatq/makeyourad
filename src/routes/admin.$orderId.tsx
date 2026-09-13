@@ -51,15 +51,17 @@ function OrderAdminPage() {
       </div>
     );
   }
-  return <Detail detail={detail} canGenerate={Boolean(session.aiAvailable)} />;
+  return <Detail detail={detail} canGenerate={Boolean(session.aiAvailable)} engine={session.generationEngine ?? "imagine"} />;
 }
 
 function Detail({
   detail,
   canGenerate,
+  engine,
 }: {
   detail: Awaited<ReturnType<typeof adminOrder>>;
   canGenerate: boolean;
+  engine: "imagine" | "xai";
 }) {
   const router = useRouter();
   const { order, events, assets, packet, generation } = detail;
@@ -87,12 +89,17 @@ function Detail({
 
   useEffect(() => {
     if (generation?.status !== "running") return;
-    const t = window.setTimeout(() => {
-      void run("generate", () => adminGenerate({ data: { id: order.id, action: "tick" } }));
-    }, 2800);
-    return () => window.clearTimeout(t);
+    const viaApi = (generation.engine ?? engine) === "xai";
+    const t = window.setInterval(() => {
+      if (viaApi) {
+        void run("generate", () => adminGenerate({ data: { id: order.id, action: "tick" } }));
+      } else {
+        void router.invalidate();
+      }
+    }, viaApi ? 2800 : 2500);
+    return () => window.clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [generation?.status, generation?.updatedAt, order.id]);
+  }, [generation?.status, generation?.engine, engine, order.id]);
 
   const uploads = assets.filter((a) => a.kind === "upload" || a.kind === "logo");
   const deliveries = assets.filter((a) => a.kind === "delivery");
@@ -191,12 +198,14 @@ function Detail({
           <section className="panel p-5">
             <h2 className="font-display text-xl">Generate</h2>
             <p className="mt-1 text-sm text-muted">
-              Builds each recipe slot from the packet. Stills first, then motion. Uses the customer’s photos when we have them.
+              {engine === "imagine"
+                ? "Grok Imagine draws each recipe slot from this SuperGrok account — still first, then motion. Uses the customer’s photos when we have them."
+                : "Builds each recipe slot from the packet. Stills first, then motion. Uses the customer’s photos when we have them."}
             </p>
             {generation?.error ? <p className="mt-2 text-sm text-danger">{generation.error}</p> : null}
             {!canGenerate ? (
               <p className="mt-2 text-sm text-danger">
-                This live copy doesn’t have the image engine attached, so Generate is off here.
+                Generate is off on this copy.
               </p>
             ) : null}
             {error && busy === "generate" ? <p className="mt-2 text-sm text-danger">{error}</p> : null}
@@ -216,7 +225,9 @@ function Detail({
                 }
               >
                 {generating
-                  ? "Generating…"
+                  ? engine === "imagine"
+                    ? "Grok is drawing…"
+                    : "Generating…"
                   : generation?.status === "done"
                     ? "Generate again"
                     : generation?.status === "error"
@@ -231,7 +242,15 @@ function Detail({
                     <div className="flex items-baseline justify-between gap-3">
                       <span className="font-medium">{s.label}</span>
                       <span className="text-xs uppercase tracking-wider text-muted">
-                        {s.status === "video" ? "animating" : s.status}
+                        {s.status === "queued"
+                          ? "waiting"
+                          : s.status === "still" && !s.stillUrl
+                            ? "drawing"
+                            : s.status === "still"
+                              ? "animating"
+                              : s.status === "video"
+                                ? "animating"
+                                : s.status}
                         {s.duration ? ` · ${s.duration}s` : ""}
                       </span>
                     </div>

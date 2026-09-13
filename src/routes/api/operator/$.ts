@@ -16,7 +16,12 @@ import {
   seedDemoIfEmpty,
   slaSnapshot,
 } from "@/lib/orders.server";
-import { tickGeneration } from "@/lib/generate-ad.server";
+import {
+  claimNextImagineWork,
+  completeImagineSlot,
+  listImagineQueue,
+  tickGeneration,
+} from "@/lib/generate-ad.server";
 import { requestIsOperator, requestOrigin, unauthorizedJson } from "@/lib/operator-auth.server";
 
 export const Route = createFileRoute("/api/operator/$")({
@@ -33,7 +38,42 @@ async function handle(request: Request, splat: string, method: "GET" | "POST") {
   const parts = splat.split("/").filter(Boolean);
 
   try {
-    if (method === "GET" && parts.length === 1 && parts[0] === "sla") {
+    if (parts[0] === "imagine") {
+      if (method === "GET" && parts[1] === "next") {
+        const work = await claimNextImagineWork(requestOrigin(request));
+        return Response.json({ job: work });
+      }
+      if (method === "GET" && parts[1] === "pending") {
+        const jobs = await listImagineQueue();
+        return Response.json({
+          jobs: jobs.map((j) => ({
+            orderId: j.orderId,
+            businessName: j.businessName,
+            status: j.job.status,
+            slots: j.job.slots.map((s) => ({ id: s.id, label: s.label, status: s.status })),
+          })),
+        });
+      }
+      if (method === "POST" && parts[1] === "complete") {
+        const body = await readJson(request);
+        const orderId = String(body.orderId ?? "");
+        const slotId = String(body.slotId ?? "");
+        if (!orderId || !slotId) return Response.json({ error: "orderId and slotId required" }, { status: 400 });
+        const result = await completeImagineSlot({
+          orderId,
+          slotId,
+          kind: body.kind === "video" ? "video" : "still",
+          filename: String(body.filename ?? `${slotId}-gen.bin`),
+          mime: String(body.mime ?? "application/octet-stream"),
+          dataUrl: typeof body.dataUrl === "string" ? body.dataUrl : undefined,
+          url: typeof body.url === "string" ? body.url : undefined,
+          origin: requestOrigin(request),
+        });
+        return Response.json(result);
+      }
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }
+    if (method === "GET" && parts[0] === "sla") {
       await seedDemoIfEmpty();
       return Response.json(await slaSnapshot());
     }
