@@ -13,7 +13,7 @@ export function imagineWorkerToken(): string {
 }
 
 export function operatorEmail(): string {
-  return env("OPERATOR_EMAIL") ?? "operator@makeyourad.com";
+  return env("OPERATOR_EMAIL") ?? "jtrocki@geotargetus.com";
 }
 
 export function isPreviewOperatorSecret(): boolean {

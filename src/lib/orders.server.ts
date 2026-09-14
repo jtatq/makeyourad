@@ -391,6 +391,22 @@ export async function claimOrder(id: string, actor = "operator"): Promise<OrderR
   return next;
 }
 
+export async function setOrderEmail(id: string, email: string, actor = "operator"): Promise<OrderRow> {
+  const order = await getOrder(id);
+  if (!order) throw new Error("Order not found");
+  const nextEmail = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) {
+    throw new Error("Need a valid delivery email");
+  }
+  if (nextEmail === order.email.toLowerCase()) return order;
+  const sql = await getSql();
+  await sql.query(`update orders set email = $1, updated_at = now() where id = $2`, [nextEmail, id]);
+  await appendEvent(id, "profile", `Delivery email set to ${nextEmail}.`, actor);
+  const next = await getOrder(id);
+  if (!next) throw new Error("Order not found");
+  return next;
+}
+
 export async function createOperatorOrder(input: {
   product: ProductId;
   businessName: string;

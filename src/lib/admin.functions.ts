@@ -32,6 +32,7 @@ import {
   purgeSeedDemoOrders,
   refundOrder,
   remakeOrder,
+  setOrderEmail,
   slaSnapshot,
 } from "./orders.server";
 import {
@@ -160,8 +161,15 @@ export const adminCreateFromProfile = createServerFn({ method: "POST" })
   .validator(z.object({ raw: z.string().min(20).max(20000) }))
   .handler(async ({ data }) => {
     requireAdmin();
-    const email = env("OPERATOR_EMAIL") || env("FROM_EMAIL") || "hello@makeyourad.com";
+    const email = env("OPERATOR_EMAIL") || "jtrocki@geotargetus.com";
     return createOrdersFromProfile(data.raw, email);
+  });
+
+export const adminSetEmail = createServerFn({ method: "POST" })
+  .validator(z.object({ id: z.string(), email: z.string().email() }))
+  .handler(async ({ data }) => {
+    requireAdmin();
+    return setOrderEmail(data.id, data.email, "admin");
   });
 
 const SlotIdSchema = z.enum(["hook", "mascot", "body_1", "body_2", "body_3", "end_card", "static"]);
@@ -277,9 +285,10 @@ export const adminQc = createServerFn({ method: "POST" })
   });
 
 export const adminDeliver = createServerFn({ method: "POST" })
-  .validator(z.object({ id: z.string() }))
+  .validator(z.object({ id: z.string(), email: z.string().email().optional() }))
   .handler(async ({ data }) => {
     requireAdmin();
+    if (data.email) await setOrderEmail(data.id, data.email, "admin");
     return deliverOrder(data.id, requestOrigin(getRequest()), "admin");
   });
 

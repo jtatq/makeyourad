@@ -21,6 +21,7 @@ import {
   adminRemake,
   adminSaveTimeline,
   adminSession,
+  adminSetEmail,
   adminSlotQc,
 } from "@/lib/admin.functions";
 import { PRODUCTS } from "@/lib/products";
@@ -79,6 +80,7 @@ function Detail({
   const [clean, setClean] = useState(false);
   const [note, setNote] = useState("");
   const [direction, setDirection] = useState("");
+  const [deliverTo, setDeliverTo] = useState(order.email);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -94,6 +96,10 @@ function Detail({
       setBusy(null);
     }
   }
+
+  useEffect(() => {
+    setDeliverTo(order.email);
+  }, [order.email]);
 
   useEffect(() => {
     if (generation?.status !== "running") return;
@@ -415,9 +421,32 @@ function Detail({
               >
                 Pass QC
               </Button>
+              <div className="grid gap-2">
+                <Label htmlFor="deliver-to">Send delivery to</Label>
+                <Input
+                  id="deliver-to"
+                  type="email"
+                  value={deliverTo}
+                  onChange={(e) => setDeliverTo(e.target.value)}
+                  placeholder="client@example.com"
+                />
+                <Button
+                  variant="secondary"
+                  disabled={busy !== null || !deliverTo.trim()}
+                  onClick={() =>
+                    void run("email", () => adminSetEmail({ data: { id: order.id, email: deliverTo.trim() } }))
+                  }
+                >
+                  Save email
+                </Button>
+              </div>
               <Button
                 disabled={busy !== null}
-                onClick={() => void run("deliver", () => adminDeliver({ data: { id: order.id } }))}
+                onClick={() =>
+                  void run("deliver", () =>
+                    adminDeliver({ data: { id: order.id, email: deliverTo.trim() } }),
+                  )
+                }
               >
                 Send delivery email
               </Button>
