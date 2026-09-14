@@ -221,9 +221,9 @@ export function parseSummary(parsed: ParsedBriefing): string {
   if (parsed.businessName) bits.push(parsed.businessName);
   if (parsed.categoryLabel) bits.push(parsed.categoryLabel);
   if (parsed.city && parsed.state) bits.push(`${parsed.city}, ${parsed.state}`);
-  if (parsed.socialScript) bits.push("12s social");
-  if (parsed.voiceoverScript) bits.push("20s voiceover");
-  if (parsed.cameraScript) bits.push("40s camera");
+  if (parsed.voiceoverScript) bits.push("20s voiceover (will generate)");
+  if (parsed.socialScript) bits.push("12s social (queued later)");
+  if (parsed.cameraScript) bits.push("40s camera (queued later)");
   if (parsed.website) bits.push(parsed.website.replace(/^https?:\/\//, ""));
   return bits.join(" · ");
 }

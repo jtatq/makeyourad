@@ -475,12 +475,11 @@ export async function applyAudienceProfile(orderId: string, raw: string): Promis
 
 export async function createOrdersFromProfile(raw: string, email: string): Promise<OrderRow[]> {
   const parsed = parseAudiencePaste(raw);
-  const products: ProductId[] = [];
-  if (parsed.socialScript) products.push("video-12");
-  if (parsed.voiceoverScript) products.push("video-20");
-  if (parsed.cameraScript) products.push("video-40");
-  if (products.length === 0) {
-    throw new Error("Need AD CONCEPTS: Short-Form Social, Voiceover (25–30s), and/or Camera-Facing.");
+  const brief = spokenOnly(
+    scriptForProduct(parsed, "video-20", "") || parsed.voiceoverScript || parsed.cameraScript || parsed.socialScript || "",
+  );
+  if (brief.length < 8) {
+    throw new Error("Need a Voiceover (25–30s) script in AD CONCEPTS. 12s and 40s jobs are off for now.");
   }
   const businessName =
     parsed.businessName ||
@@ -502,27 +501,19 @@ export async function createOrdersFromProfile(raw: string, email: string): Promi
   }
   const phone = parsed.phone || "See website";
   const tone: Tone = category === "spa" || category === "salon" ? "premium" : "trustworthy";
-  const created: OrderRow[] = [];
-  for (const product of products) {
-    const brief = spokenOnly(scriptForProduct(parsed, product, ""));
-    if (brief.length < 8) continue;
-    created.push(
-      await createOperatorOrder({
-        product,
-        businessName,
-        category,
-        city,
-        state,
-        website: parsed.website,
-        phone,
-        email,
-        brief,
-        tone,
-      }),
-    );
-  }
-  if (created.length === 0) throw new Error("No scripts found to build.");
-  return created;
+  const created = await createOperatorOrder({
+    product: "video-20",
+    businessName,
+    category,
+    city,
+    state,
+    website: parsed.website,
+    phone,
+    email,
+    brief,
+    tone,
+  });
+  return [created];
 }
 
 export async function attachFiles(

@@ -115,6 +115,14 @@ function slotSeconds(duration: string): number | null {
   return Math.min(40, Math.max(4, Math.max(...nums)));
 }
 
+/** xAI video accepts 6 / 10 / 15. 20s masters pad the last frame after the 15s take. */
+function apiVideoSeconds(target: number | null): number {
+  if (target == null) return 15;
+  if (target <= 6) return 6;
+  if (target <= 10) return 10;
+  return 15;
+}
+
 function imagineSeconds(duration: string): 6 | 10 | 15 | null {
   const n = slotSeconds(duration);
   if (n == null) return null;
@@ -445,7 +453,8 @@ async function generateStill(prompt: string, ref: string | null): Promise<string
 }
 
 async function startVideo(prompt: string, imageUrl: string, duration: number): Promise<string> {
-  const tries = [...new Set([duration, 15, 10, 6])].filter((d) => d >= 1 && d <= 40);
+  const cap = apiVideoSeconds(duration);
+  const tries = [...new Set([cap, 15, 10, 6])].filter((d) => d >= 6 && d <= 15);
   let lastMsg = "xAI video error";
   for (const d of tries) {
     const payload: Record<string, unknown> = {
@@ -869,7 +878,7 @@ function initJob(packet: GenerationPacket, engine: GenEngine, direction?: string
     direction: direction?.trim() || undefined,
     slots: packet.recipe.slots.map((s) => {
       const target = slotSeconds(s.duration);
-      const duration = engine === "imagine" ? imagineSeconds(s.duration) : target;
+      const duration = engine === "imagine" ? imagineSeconds(s.duration) : apiVideoSeconds(target);
       const spoken = spokenForSlot(packet, s.id);
       const still = (engine === "imagine" ? imagineStillPrompt(packet, s, ratio) : stillPrompt(packet, s, ratio)) + " " + extra;
       const motion =
@@ -1130,6 +1139,22 @@ export async function tickGeneration(
   if (order.status === "delivered" || order.status === "refunded") {
     throw new Error(`Cannot generate a ${order.status} order`);
   }
+  if (order.product !== "video-20") {
+    const existing = await loadGeneration(orderId);
+    if (existing && existing.status === "running") {
+      existing.status = "error";
+      existing.error = "Stopped — 20s spots only for now.";
+      for (const s of existing.slots) {
+        if (s.status === "queued" || s.status === "still" || s.status === "video") {
+          s.status = "error";
+          s.error = existing.error;
+        }
+      }
+      await saveGeneration(orderId, existing);
+      await appendEvent(orderId, "generate", "Stopped — 20s spots only for now.", "admin");
+    }
+    throw new Error("20s spots only for now. Open the 20 Second job.");
+  }
 
   let job = await loadGeneration(orderId);
 
@@ -1222,10 +1247,14 @@ export async function tickGeneration(
           slot.duration,
         );
         slot.videoRequestId = vidId;
+        slot.claimedAt = new Date().toISOString();
         slot.status = "video";
-        await appendEvent(orderId, "generate", `Animating ${slot.label} (${slot.duration}s).`, "grok");
+        await appendEvent(orderId, "generate", `Animating ${slot.label} (${slot.duration}s API take).`, "grok");
       }
     } else if (slot.status === "video") {
+      if (slot.claimedAt && Date.now() - Date.parse(slot.claimedAt) > 18 * 60 * 1000) {
+        throw new Error("Video timed out after 18 minutes");
+      }
       if (!slot.videoRequestId) {
         if (!slot.stillUrl) throw new Error("Missing still for video");
         slot.videoRequestId = await startVideo(
@@ -1273,3 +1302,52 @@ export async function tickGeneration(
   await saveGeneration(orderId, job);
   return { job, order: (await getOrder(orderId))! };
 }
+
+const workerRef = globalThis as typeof globalThis & {
+  __myaGenTimer__?: ReturnType<typeof setInterval>;
+  __myaGenBusy__?: boolean;
+};
+
+/** Droplet-side pump: start/tick spots as paid jobs land. QC stays human. */
+export function generateWorkerEnabled(): boolean {
+  if (env("AUTO_GENERATE") !== "1") return false;
+  if (process.argv.includes("build")) return false;
+  if (process.env.npm_lifecycle_event === "build") return false;
+  return generationEngine() === "xai" && Boolean(apiKey());
+}
+
+async function pumpGenerateQueue(): Promise<void> {
+  if (workerRef.__myaGenBusy__) return;
+  if (!generateWorkerEnabled()) return;
+  workerRef.__myaGenBusy__ = true;
+  try {
+    const orders = await listOrders();
+    const open = orders.filter((o) => o.product === "video-20" && (o.status === "paid" || o.status === "in_production"));
+    for (const order of open) {
+      const job = await loadGeneration(order.id);
+      if (job?.status === "done" || job?.status === "error") continue;
+      const action = job ? "tick" : "start";
+      await tickGeneration(order.id, { action });
+      return;
+    }
+  } catch {
+    /* next interval */
+  } finally {
+    workerRef.__myaGenBusy__ = false;
+  }
+}
+
+export function ensureGenerateWorker(): void {
+  if (typeof setInterval === "undefined") return;
+  if (!generateWorkerEnabled()) return;
+  if (workerRef.__myaGenTimer__) return;
+  workerRef.__myaGenTimer__ = setInterval(() => {
+    void pumpGenerateQueue();
+  }, 8000);
+  setTimeout(() => {
+    void pumpGenerateQueue();
+  }, 2000);
+}
+
+ensureGenerateWorker();
+

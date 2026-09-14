@@ -83,7 +83,8 @@ function QueuePage() {
           </div>
         ) : (
           <div className="mb-4 rounded-md bg-elevated px-4 py-3 text-sm text-muted">
-            Generate runs on the xAI API — grok-imagine-image-2.0 and grok-imagine-video-1.5.
+            Generate runs 20s spots on the xAI API (15s take, padded to 20). 12s and 40s stay off until that path is
+            stable. Grok Bot comes later.
           </div>
         )}
         {sla.critical_20h.length > 0 ? (

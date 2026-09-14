@@ -58,7 +58,7 @@ function OrderAdminPage() {
       </div>
     );
   }
-  return <Detail detail={detail} canGenerate={Boolean(session.aiAvailable)} engine={session.generationEngine ?? "imagine"} />;
+  return <Detail detail={detail} canGenerate={Boolean(session.aiAvailable) && detail.order.product === "video-20"} engine={session.generationEngine ?? "imagine"} />;
 }
 
 function Detail({
@@ -178,7 +178,11 @@ function Detail({
             {order.add_ons.includes("mascot") ? " + mascot" : ""} · {formatUsd(order.price_cents)} · {order.city},{" "}
             {order.state}
           </p>
-          {generation?.error ? <p className="mt-2 text-sm text-danger">{generation.error}</p> : null}
+          {order.product !== "video-20" ? (
+            <p className="mt-2 text-sm text-warn">
+              20s spots only right now. Generate is off on 12s and 40s jobs so they cannot hang the API.
+            </p>
+          ) : null}
           {error && (busy === "generate" || busy === "assemble" || busy === "timeline" || busy === "profile") ? (
             <p className="mt-2 text-sm text-danger">{error}</p>
           ) : null}
