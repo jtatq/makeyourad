@@ -1,4 +1,13 @@
-:80 {
+{
+	email hello@geotargetus.dev
+}
+
+mya.geotargetus.dev {
+	encode gzip
+	reverse_proxy 127.0.0.1:3000
+}
+
+http://:80 {
 	encode gzip
 	reverse_proxy 127.0.0.1:3000
 }
