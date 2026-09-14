@@ -3,7 +3,17 @@ import { getRequest, setResponseHeader } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { listOutbound, sendSlaDigest } from "./email.server";
 import { dbSource } from "./db";
-import { aiAvailable, assembleMaster, generationEngine, loadGeneration, regenSlot, reviewSlot, tickGeneration } from "./generate-ad.server";
+import {
+  aiAvailable,
+  assembleMaster,
+  clipQcSummary,
+  generationEngine,
+  loadGeneration,
+  regenSlot,
+  reviewSlot,
+  runAutoQc,
+  tickGeneration,
+} from "./generate-ad.server";
 import {
   attachFiles,
   claimOrder,
@@ -170,6 +180,13 @@ export const adminAssemble = createServerFn({ method: "POST" })
     return assembleMaster(data.id);
   });
 
+export const adminAutoQc = createServerFn({ method: "POST" })
+  .validator(z.object({ id: z.string() }))
+  .handler(async ({ data }) => {
+    requireAdmin();
+    return runAutoQc(data.id);
+  });
+
 export const adminAttach = createServerFn({ method: "POST" })
   .validator(
     z.object({
@@ -195,6 +212,15 @@ export const adminQc = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     requireAdmin();
+    const order = await getOrder(data.id);
+    if (!order) throw new Error("Order not found");
+    const job = await loadGeneration(data.id);
+    if (job) {
+      const summary = clipQcSummary(order, job);
+      if (!summary.allPassed) {
+        throw new Error(`Pass clip QC first. Still open: ${summary.open.join(", ") || "clips"}`);
+      }
+    }
     return passQc(
       data.id,
       {

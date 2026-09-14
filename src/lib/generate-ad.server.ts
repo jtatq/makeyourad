@@ -13,6 +13,7 @@ import {
 import { buildPacket, type GenerationPacket } from "./prompts/compiler";
 import { TONE_PACKS } from "./prompts/tones";
 import { masterClips, type SlotId } from "./recipe";
+import { inspectClip, pronunciationNote, type AutoQcResult } from "./auto-qc.server";
 import { PRODUCTS, type Tone } from "./products";
 
 export type GenEngine = "imagine" | "xai";
@@ -33,6 +34,7 @@ export type GenSlotState = {
   error?: string;
   qc?: "pass" | "fix";
   qcNote?: string;
+  autoQc?: AutoQcResult;
 };
 
 export type GenerationJob = {
@@ -252,10 +254,16 @@ function stillPrompt(packet: GenerationPacket, slot: GenerationPacket["recipe"][
   return lines.filter(Boolean).join("\n");
 }
 
-function motionPrompt(slot: GenerationPacket["recipe"]["slots"][number], seconds: number, tone: string) {
+function motionPrompt(
+  slot: GenerationPacket["recipe"]["slots"][number],
+  seconds: number,
+  tone: string,
+  city: string,
+  state: string,
+) {
   const talking =
     slot.id === "hook" || slot.id.startsWith("body")
-      ? "The person talks to camera with natural hand gestures. Mouth moves in speech. Do not freeze the last seconds."
+      ? `The person talks to camera with natural hand gestures. Mouth moves in speech. ${pronunciationNote(city, state)} Do not freeze the last seconds.`
       : "Slow, confident camera. Keep type readable if present.";
   return [
     `Animate this advertisement frame as a ${seconds}-second ${slot.label.toLowerCase()} clip.`,
@@ -298,11 +306,17 @@ function imagineStillPrompt(
   return parts.join(" ");
 }
 
-function imagineMotionPrompt(slot: GenerationPacket["recipe"]["slots"][number], seconds: number, tone: Tone) {
+function imagineMotionPrompt(
+  slot: GenerationPacket["recipe"]["slots"][number],
+  seconds: number,
+  tone: Tone,
+  city: string,
+  state: string,
+) {
   const pack = TONE_PACKS[tone];
   const talking =
     slot.id === "hook" || slot.id.startsWith("body")
-      ? "The person talks to camera with natural hand gestures and a slight weight shift. Mouth moves in speech. Do not freeze the last seconds."
+      ? `The person talks to camera with natural hand gestures and a slight weight shift. Mouth moves in speech. ${pronunciationNote(city, state)} Do not freeze the last seconds.`
       : "Slow, confident camera, subject stays recognizable, type stays readable.";
   return [
     `Animate this advertisement frame as a ${seconds}-second ${slot.label.toLowerCase()} clip.`,
@@ -474,6 +488,74 @@ function emptySlotMedia(slot: GenSlotState) {
   slot.claimedAt = undefined;
   slot.error = undefined;
   slot.status = "queued";
+  slot.autoQc = undefined;
+}
+
+async function applyAutoQc(order: OrderRow, job: GenerationJob, slot: GenSlotState, actor = "grok") {
+  if (slot.status !== "done") return;
+  try {
+    const result = await inspectClip({ slot, order });
+    slot.autoQc = result;
+    if (result.status === "pass") {
+      slot.qc = "pass";
+      await appendEvent(order.id, "qc", `Auto QC passed · ${slot.label}.`, actor);
+    } else if (result.status === "fail") {
+      const note = result.checks
+        .filter((c) => !c.ok)
+        .map((c) => c.detail)
+        .join(" ")
+        .slice(0, 280);
+      slot.qc = "fix";
+      slot.qcNote = note;
+      await discardSlotAssets(order.id, slot.id);
+      emptySlotMedia(slot);
+      slot.qc = "fix";
+      slot.qcNote = note;
+      job.masterUrl = undefined;
+      job.assembleRequested = false;
+      await appendEvent(order.id, "qc", `Auto QC failed · discarded ${slot.label} · ${note}`, actor);
+    } else {
+      const note = result.checks
+        .filter((c) => !c.ok)
+        .map((c) => c.label)
+        .join(", ");
+      await appendEvent(
+        order.id,
+        "qc",
+        `Auto QC needs review · ${slot.label}${note ? ` · ${note}` : ""}.`,
+        actor,
+      );
+    }
+  } catch (err) {
+    slot.autoQc = {
+      status: "warn",
+      ranAt: new Date().toISOString(),
+      checks: [
+        {
+          id: "run",
+          ok: false,
+          hard: false,
+          label: "Auto QC",
+          detail: err instanceof Error ? err.message : "QC failed to run",
+        },
+      ],
+    };
+  }
+}
+
+export async function runAutoQc(orderId: string): Promise<{ job: GenerationJob; order: OrderRow }> {
+  const order = await getOrder(orderId);
+  if (!order) throw new Error("Order not found");
+  const job = await loadGeneration(orderId);
+  if (!job) throw new Error("No clips to check");
+  for (const slot of job.slots) {
+    if (slot.status === "done" && (slot.videoUrl || slot.stillUrl)) {
+      await applyAutoQc(order, job, slot, "admin");
+    }
+  }
+  finishIfDone(job);
+  await saveGeneration(orderId, job);
+  return { job, order: (await getOrder(orderId))! };
 }
 
 export async function reviewSlot(
@@ -616,8 +698,8 @@ function initJob(packet: GenerationPacket, engine: GenEngine): GenerationJob {
         motionPrompt:
           duration != null
             ? engine === "imagine"
-              ? imagineMotionPrompt(s, duration, packet.intake.tone)
-              : motionPrompt(s, duration, packet.intake.tone)
+              ? imagineMotionPrompt(s, duration, packet.intake.tone, packet.intake.city, packet.intake.state)
+              : motionPrompt(s, duration, packet.intake.tone, packet.intake.city, packet.intake.state)
             : undefined,
       };
     }),
@@ -810,6 +892,7 @@ export async function completeImagineSlot(opts: {
     if (!slot.duration) {
       slot.status = "done";
       await appendEvent(opts.orderId, "generate", `Still ready · ${slot.label}.`, "grok");
+      await applyAutoQc(order, job, slot);
     } else {
       slot.status = "still";
       await appendEvent(opts.orderId, "generate", `Still ready · ${slot.label}. Animating next.`, "grok");
@@ -833,6 +916,7 @@ export async function completeImagineSlot(opts: {
       slot.id === "mascot" ? "Mascot extra video ready." : `Clip ready · ${slot.label}.`,
       "grok",
     );
+    await applyAutoQc(order, job, slot);
   }
 
   finishIfDone(job);
@@ -927,13 +1011,15 @@ export async function tickGeneration(
       if (!slot.duration) {
         slot.status = "done";
         await appendEvent(orderId, "generate", `Still ready · ${slot.label}.`, "grok");
+        await applyAutoQc(order, job, slot);
       }
     } else if (slot.status === "still" && slot.stillUrl) {
       if (!slot.duration) {
         slot.status = "done";
+        await applyAutoQc(order, job, slot);
       } else {
         const vidId = await startVideo(
-          motionPrompt(recipeSlot, slot.duration, order.tone),
+          motionPrompt(recipeSlot, slot.duration, order.tone, order.city, order.state),
           slot.stillUrl,
           slot.duration,
         );
@@ -945,7 +1031,7 @@ export async function tickGeneration(
       if (!slot.videoRequestId) {
         if (!slot.stillUrl) throw new Error("Missing still for video");
         slot.videoRequestId = await startVideo(
-          motionPrompt(recipeSlot, slot.duration ?? 6, order.tone),
+          motionPrompt(recipeSlot, slot.duration ?? 6, order.tone, order.city, order.state),
           slot.stillUrl,
           slot.duration ?? 6,
         );
@@ -957,6 +1043,7 @@ export async function tickGeneration(
           slot.status = "done";
           await attachGen(orderId, `${slot.id}-gen.mp4`, last.url, "video/mp4", "delivery");
           await appendEvent(orderId, "generate", `Clip ready · ${slot.label}.`, "grok");
+          await applyAutoQc(order, job, slot);
         } else if (last.status === "failed" || last.status === "expired") {
           throw new Error(`Video ${last.status} for ${slot.label}`);
         }

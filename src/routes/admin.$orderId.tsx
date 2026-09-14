@@ -7,6 +7,7 @@ import { Input, Label, Textarea } from "@/components/ui/input";
 import {
   adminAssemble,
   adminAttach,
+  adminAutoQc,
   adminClaim,
   adminDeliver,
   adminFlag,
@@ -270,6 +271,17 @@ function Detail({
                           ? "Retry generate"
                           : "Generate ad"}
               </Button>
+              {hasOutput ? (
+                <Button
+                  className="w-full"
+                  size="sm"
+                  variant="secondary"
+                  disabled={busy !== null}
+                  onClick={() => void run("auto-qc", () => adminAutoQc({ data: { id: order.id } }))}
+                >
+                  {busy === "auto-qc" ? "Checking…" : "Run auto QC"}
+                </Button>
+              ) : null}
             </div>
             {generation ? (
               <ol className="mt-4 space-y-5">
@@ -300,6 +312,16 @@ function Detail({
                       {s.error ? <p className="mt-1 text-xs text-danger">{s.error}</p> : null}
                       {s.qc === "fix" && !playable ? (
                         <p className="mt-2 text-sm text-danger">Failed clip discarded. It will not go in the master.</p>
+                      ) : null}
+                      {s.autoQc ? (
+                        <ul className="mt-2 space-y-1 text-xs">
+                          {s.autoQc.checks.map((c) => (
+                            <li key={c.id} className={c.ok ? "text-ok" : c.hard ? "text-danger" : "text-warn"}>
+                              {c.ok ? "Pass" : c.hard ? "Fail" : "Review"} · {c.label}
+                              {c.detail ? ` — ${c.detail}` : ""}
+                            </li>
+                          ))}
+                        </ul>
                       ) : null}
                       {playable && s.qc !== "fix" ? (
                         <div className="mt-2 max-h-[52vh] overflow-hidden rounded-md bg-elevated">
