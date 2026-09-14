@@ -87,6 +87,44 @@ function QueuePage() {
             stable. Grok Bot comes later.
           </div>
         )}
+        {dashboard.apiLimits ? (
+          <div
+            className={`mb-4 rounded-md px-4 py-3 text-sm ${
+              dashboard.apiLimits.lastHour.limited > 0 || dashboard.apiLimits.lastDay.limited > 0
+                ? "bg-warn text-fg"
+                : "bg-elevated text-muted"
+            }`}
+          >
+            <p className="font-medium text-fg">xAI rate limits</p>
+            <p className="mt-1">
+              Last hour · {dashboard.apiLimits.lastHour.video} video
+              {dashboard.apiLimits.lastHour.video === 1 ? "" : "s"} · {dashboard.apiLimits.lastHour.image}{" "}
+              still{dashboard.apiLimits.lastHour.image === 1 ? "" : "s"}
+              {dashboard.apiLimits.lastHour.limited
+                ? ` · ${dashboard.apiLimits.lastHour.limited} hit 429`
+                : " · no 429s"}
+              . Today · {dashboard.apiLimits.lastDay.video} video
+              {dashboard.apiLimits.lastDay.video === 1 ? "" : "s"} · {dashboard.apiLimits.lastDay.image} still
+              {dashboard.apiLimits.lastDay.image === 1 ? "" : "s"}.
+            </p>
+            <p className="mt-1">
+              Published caps (Tier 0): video {dashboard.apiLimits.videoRpsCap}/sec · image{" "}
+              {dashboard.apiLimits.imageRpsCap}/sec. xAI does not return remaining quota; 429s pause polls, never
+              stack another video.
+            </p>
+            {dashboard.apiLimits.last429At ? (
+              <p className="mt-1 text-fg">
+                Last 429 · {dashboard.apiLimits.last429Path} · {dashboard.apiLimits.last429At}
+              </p>
+            ) : null}
+            {dashboard.apiLimits.lastRemaining || dashboard.apiLimits.lastLimit ? (
+              <p className="mt-1">
+                Headers · remaining {dashboard.apiLimits.lastRemaining || "—"} · limit{" "}
+                {dashboard.apiLimits.lastLimit || "—"} · reset {dashboard.apiLimits.lastReset || "—"}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         {sla.critical_20h.length > 0 ? (
           <div className="mb-4 rounded-md bg-danger px-4 py-3 text-sm text-fg">
             {sla.critical_20h.length} order{sla.critical_20h.length === 1 ? "" : "s"} past 20 hours.

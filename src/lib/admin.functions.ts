@@ -46,6 +46,7 @@ import {
   tokenMatches,
 } from "./operator-auth.server";
 import { env, isWorkspacePreview } from "./env.server";
+import { apiLimitSnapshot } from "./xai-limits.server";
 
 function requireAdmin() {
   const request = getRequest();
@@ -79,11 +80,17 @@ export const adminSession = createServerFn({ method: "GET" }).handler(async () =
 export const adminDashboard = createServerFn({ method: "GET" }).handler(async () => {
   requireAdmin();
   await purgeSeedDemoOrders();
-  const [orders, sla, emails] = await Promise.all([listOrders(), slaSnapshot(), listOutbound(12)]);
+  const [orders, sla, emails, apiLimits] = await Promise.all([
+    listOrders(),
+    slaSnapshot(),
+    listOutbound(12),
+    apiLimitSnapshot(),
+  ]);
   return {
     orders,
     sla,
     emails,
+    apiLimits,
     durable: dbSource === "neon",
     preview: isWorkspacePreview(),
     aiAvailable: aiAvailable(),

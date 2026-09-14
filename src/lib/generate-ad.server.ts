@@ -18,6 +18,7 @@ import { spokenPlace } from "./intake";
 import { extractProductScript, slotScriptLine } from "./script";
 import { PRODUCTS, type Tone } from "./products";
 import { stitchMasterFile } from "./stitch.server";
+import { classifyXaiPath, readLimitHeaders, recordXaiCall } from "./xai-limits.server";
 
 export type GenEngine = "imagine" | "xai";
 export type GenSlotStatus = "queued" | "still" | "video" | "done" | "error";
@@ -218,10 +219,12 @@ async function saveGeneration(orderId: string, job: GenerationJob) {
   ]);
 }
 
-async function xaiFetch(path: string, init: RequestInit): Promise<Response> {
+async function xaiFetch(path: string, init: RequestInit, attempt = 0): Promise<Response> {
   const key = apiKey();
   if (!key) throw new Error("AI is not available in this environment");
-  return fetch(`${XAI}${path}`, {
+  const method = (init.method || "GET").toUpperCase();
+  const started = Date.now();
+  const res = await fetch(`${XAI}${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${key}`,
@@ -229,6 +232,28 @@ async function xaiFetch(path: string, init: RequestInit): Promise<Response> {
       ...(init.headers ?? {}),
     },
   });
+  const limits = readLimitHeaders(res);
+  let error: string | null = null;
+  if (!res.ok) error = `${res.status}`;
+  if (res.status === 429) error = `429${limits.retryAfter ? ` retry-after ${limits.retryAfter}s` : ""}`;
+  recordXaiCall({
+    kind: classifyXaiPath(path, method),
+    path,
+    method,
+    status: res.status,
+    ms: Date.now() - started,
+    retryAfter: limits.retryAfter,
+    remaining: limits.remaining,
+    limit: limits.limit,
+    reset: limits.reset,
+    error,
+  });
+  if (res.status === 429 && method === "GET" && attempt < 1) {
+    const wait = Math.min(8, Math.max(1, Number(limits.retryAfter) || 2));
+    await new Promise((r) => setTimeout(r, wait * 1000));
+    return xaiFetch(path, init, attempt + 1);
+  }
+  return res;
 }
 
 function pickUrl(body: unknown): string | null {
