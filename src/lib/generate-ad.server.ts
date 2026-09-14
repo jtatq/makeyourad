@@ -15,6 +15,7 @@ import { TONE_PACKS } from "./prompts/tones";
 import { masterClips, type SlotId } from "./recipe";
 import { inspectClip, pronunciationNote, type AutoQcResult } from "./auto-qc.server";
 import { spokenPlace } from "./intake";
+import { slotScriptLine } from "./script";
 import { PRODUCTS, type Tone } from "./products";
 import { stitchMasterFile } from "./stitch.server";
 
@@ -246,7 +247,7 @@ function stillPrompt(packet: GenerationPacket, slot: GenerationPacket["recipe"][
     `Business: ${i.businessName}, ${i.category_label} in ${spokenPlace(i.city, i.state)}.`,
     `Slot: ${slot.label}. ${slot.role}`,
     `Tone: ${i.tone}. ${packet.recipe.structure}`,
-    i.brief ? `Customer direction: ${i.brief}` : "",
+    i.brief ? `EXACT SCRIPT (speak these words, do not paraphrase): ${i.brief}` : "",
     site?.tagline ? `Tagline: ${site.tagline}` : "",
     site?.services?.length ? `Services: ${site.services.slice(0, 6).join(", ")}` : "",
     site?.about ? `About: ${site.about.slice(0, 280)}` : "",
@@ -259,9 +260,13 @@ function stillPrompt(packet: GenerationPacket, slot: GenerationPacket["recipe"][
     );
   }
   if (slot.id === "hook") {
+    const line = slotScriptLine(i.brief, packet.product, slot.id);
     lines.push(
       "Talking-head: a real owner or technician from the reference photos stands in the driveway or at the storefront, facing camera, mid-speech. Van, truck, or house from the uploads sits behind them. Match their face, shirt, and wrap — do not invent lettering.",
     );
+    if (line) {
+      lines.push(`Mouth the exact line: "${line}". Captions match those words. This is the script, not an idea.`);
+    }
   }
   if (slot.id === "mascot" && i.mascotDescription) lines.push(`Mascot: ${i.mascotDescription}`);
   return lines.filter(Boolean).join("\n");
@@ -273,10 +278,20 @@ function motionPrompt(
   tone: string,
   city: string,
   state: string,
+  spokenLine?: string,
 ) {
   const talking =
     slot.id === "hook" || slot.id.startsWith("body")
-      ? `The person talks to camera with natural hand gestures. Mouth moves in speech. ${pronunciationNote(city, state)} Do not freeze the last seconds.`
+      ? [
+          "The person talks to camera with natural hand gestures. Mouth moves in speech.",
+          spokenLine
+            ? `Speak this script verbatim, do not paraphrase: "${spokenLine}". Captions match exactly.`
+            : "",
+          pronunciationNote(city, state),
+          "Do not freeze the last seconds.",
+        ]
+          .filter(Boolean)
+          .join(" ")
       : "Slow, confident camera. Keep type readable if present.";
   return [
     `Animate this advertisement frame as a ${seconds}-second ${slot.label.toLowerCase()} clip.`,
@@ -300,7 +315,9 @@ function imagineStillPrompt(
     `This frame is the ${slot.label.toLowerCase()}: ${slot.role}`,
     `The look is ${i.tone}: ${tone.picture}`,
   ];
-  if (i.brief.trim()) parts.push(`Customer direction: ${i.brief.trim()}`);
+  if (i.brief.trim()) {
+    parts.push(`EXACT SCRIPT (speak these words, not an idea): ${i.brief.trim()}`);
+  }
   if (site?.tagline) parts.push(`Their line: ${site.tagline}.`);
   if (site?.services?.length) parts.push(`Services: ${site.services.slice(0, 5).join(", ")}.`);
   if (site?.about) parts.push(site.about.slice(0, 220));
@@ -310,9 +327,11 @@ function imagineStillPrompt(
     );
   }
   if (slot.id === "hook") {
+    const line = slotScriptLine(i.brief, packet.product, slot.id);
     parts.push(
       "Talking-head still: owner or tech from the reference photos, facing camera, mid-speech, branded van or house behind them. Match face, shirt, and wrap exactly. Do not invent lettering on the van or shirt.",
     );
+    if (line) parts.push(`They are saying, verbatim: "${line}".`);
   }
   if (slot.id === "mascot" && i.mascotDescription) parts.push(`Mascot: ${i.mascotDescription}`);
   parts.push("Use the real business. No celebrity, no watermark, no UI chrome, no agency slogan.");
@@ -325,11 +344,21 @@ function imagineMotionPrompt(
   tone: Tone,
   city: string,
   state: string,
+  spokenLine?: string,
 ) {
   const pack = TONE_PACKS[tone];
   const talking =
     slot.id === "hook" || slot.id.startsWith("body")
-      ? `The person talks to camera with natural hand gestures and a slight weight shift. Mouth moves in speech. ${pronunciationNote(city, state)} Do not freeze the last seconds.`
+      ? [
+          "The person talks to camera with natural hand gestures and a slight weight shift. Mouth moves in speech.",
+          spokenLine
+            ? `Speak this script verbatim, do not paraphrase: "${spokenLine}". Captions match exactly.`
+            : "",
+          pronunciationNote(city, state),
+          "Do not freeze the last seconds.",
+        ]
+          .filter(Boolean)
+          .join(" ")
       : "Slow, confident camera, subject stays recognizable, type stays readable.";
   return [
     `Animate this advertisement frame as a ${seconds}-second ${slot.label.toLowerCase()} clip.`,
@@ -811,8 +840,22 @@ function initJob(packet: GenerationPacket, engine: GenEngine): GenerationJob {
         motionPrompt:
           duration != null
             ? engine === "imagine"
-              ? imagineMotionPrompt(s, duration, packet.intake.tone, packet.intake.city, packet.intake.state)
-              : motionPrompt(s, duration, packet.intake.tone, packet.intake.city, packet.intake.state)
+              ? imagineMotionPrompt(
+                  s,
+                  duration,
+                  packet.intake.tone,
+                  packet.intake.city,
+                  packet.intake.state,
+                  slotScriptLine(packet.intake.brief, packet.product, s.id),
+                )
+              : motionPrompt(
+                  s,
+                  duration,
+                  packet.intake.tone,
+                  packet.intake.city,
+                  packet.intake.state,
+                  slotScriptLine(packet.intake.brief, packet.product, s.id),
+                )
             : undefined,
       };
     }),
@@ -1135,7 +1178,14 @@ export async function tickGeneration(
         await applyAutoQc(order, job, slot);
       } else {
         const vidId = await startVideo(
-          motionPrompt(recipeSlot, slot.duration, order.tone, order.city, order.state),
+          motionPrompt(
+            recipeSlot,
+            slot.duration,
+            order.tone,
+            order.city,
+            order.state,
+            slotScriptLine(order.brief, order.product, slot.id),
+          ),
           slot.stillUrl,
           slot.duration,
         );
@@ -1147,7 +1197,14 @@ export async function tickGeneration(
       if (!slot.videoRequestId) {
         if (!slot.stillUrl) throw new Error("Missing still for video");
         slot.videoRequestId = await startVideo(
-          motionPrompt(recipeSlot, slot.duration ?? 6, order.tone, order.city, order.state),
+          motionPrompt(
+            recipeSlot,
+            slot.duration ?? 6,
+            order.tone,
+            order.city,
+            order.state,
+            slotScriptLine(order.brief, order.product, slot.id),
+          ),
           slot.stillUrl,
           slot.duration ?? 6,
         );

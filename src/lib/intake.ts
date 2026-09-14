@@ -99,7 +99,7 @@ export const checkoutInputSchema = z.object({
   website: z.string().trim().max(200).optional(),
   phone: z.string().trim().min(7).max(32),
   email: z.email().max(120),
-  brief: z.string().trim().min(12).max(1200),
+  brief: z.string().trim().min(12).max(4000),
   tone: z.enum(TONES),
   platforms: z.array(z.enum(PLATFORMS)).min(1),
   assets: z.array(assetSchema).min(1, "Add at least a logo or one photo.").max(8),

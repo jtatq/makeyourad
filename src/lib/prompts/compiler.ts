@@ -1,5 +1,6 @@
 import { categoryLabel } from "../categories";
 import { spokenPlace, spokenState } from "../intake";
+import { extractProductScript, slotScripts } from "../script";
 import { PRODUCTS, type Platform, type ProductId, type Tone } from "../products";
 import { aspectRatioPriority, recipeSlots, recipeSummary, type RecipeSlot, type SlotId } from "../recipe";
 import type { WebsiteFacts } from "../website-profile";
@@ -76,6 +77,9 @@ function slotPrompt(slot: RecipeSlot, intake: IntakeForPrompt, mascot: boolean, 
   const tone = TONE_PACKS[intake.tone];
   const product = PRODUCTS[productId];
   const ratios = aspectRatioPriority(intake.platforms).join(", ");
+  const script = extractProductScript(intake.brief, productId);
+  const beats = slotScripts(script, productId);
+  const slotScript = beats[slot.id] || "";
   const vars: Record<string, string> = {
     business_name: intake.businessName,
     category: categoryLabel(intake.category),
@@ -86,6 +90,8 @@ function slotPrompt(slot: RecipeSlot, intake: IntakeForPrompt, mascot: boolean, 
     email: intake.email,
     website: intake.website?.trim() || "(none given)",
     brief: intake.brief.trim(),
+    script,
+    slot_script: slotScript,
     tone: intake.tone,
     tone_direction: tone.direction,
     tone_vo: tone.vo,
@@ -115,7 +121,9 @@ function slotPrompt(slot: RecipeSlot, intake: IntakeForPrompt, mascot: boolean, 
     `VO: {{tone_vo}}`,
     `MUSIC: {{tone_music}}`,
     `VISUAL WORLD: {{visual_world}}`,
-    `CUSTOMER DIRECTION: {{brief}}`,
+    `EXACT SCRIPT — these are the words to speak, not a theme or idea. Do not paraphrase, summarize, or write a new line:`,
+    `{{script}}`,
+    `THIS SLOT, verbatim: {{slot_script}}`,
     `{{website_block}}`,
     `ASPECT RATIO PRIORITY: {{ratios}} (produce master at the first ratio, then reframe).`,
     `Use the customer's uploaded photos/logo as primary source. Do not invent a different business.`,
@@ -125,7 +133,9 @@ function slotPrompt(slot: RecipeSlot, intake: IntakeForPrompt, mascot: boolean, 
     hook: [
       header,
       `ROLE: ${slot.role}`,
-      `First line of VO / captions, verbatim: "{{hook_line}}"`,
+      slotScript
+        ? `Spoken line and captions, verbatim: "{{slot_script}}". Do not substitute a different hook.`
+        : `First line of VO / captions, verbatim: "{{hook_line}}"`,
       `FORM: vertical talking-head commercial. One person (owner or tech from the uploaded photos if a face exists; otherwise a local tech in a branded shirt) stands in the driveway or at the storefront, facing camera, mid-speech.`,
       `BACKGROUND: their real van, truck, house, or shop from the uploads. Match wrap, logo, and shirt from the photos — do not invent lettering.`,
       `Captions sit at the bottom in clean white type on a dark bar, matching the spoken line. No logo bug, no phone number yet.`,
@@ -143,24 +153,26 @@ function slotPrompt(slot: RecipeSlot, intake: IntakeForPrompt, mascot: boolean, 
     body_1: [
       header,
       `ROLE: ${slot.role}`,
-      `BEAT: {{body_1}}`,
+      slotScript
+        ? `Spoken line and captions, verbatim: "{{slot_script}}". Continue the script — do not invent a new beat.`
+        : `BEAT: {{body_1}}`,
       `Stay in the talking-head. Same person, same location language as the hook. They keep addressing the camera — proof, {{place}}, what they actually do.`,
       `If the uploads show the work (unit, roof, job site), you may cut to that for a beat, then return to the person.`,
-      `VO continues the hook; do not repeat the hook line. Captions match VO.`,
+      `VO continues the script; captions match the spoken words exactly.`,
       `Say "{{place}}" if they name the town — full state word {{state}}, never letters.`,
       mascot ? `Do not put the mascot in this clip. The mascot is a separate extra video.` : ``,
     ].join("\n"),
     body_2: [
       header,
       `ROLE: ${slot.role}`,
-      `BEAT: {{body_2}}`,
+      slotScript ? `Spoken line, verbatim: "{{slot_script}}"` : `BEAT: {{body_2}}`,
       `This is the work itself — hands, tools, rooms, plates, care. Prefer uploaded photos over invented B-roll.`,
       `PROOF NOTE: {{proof}}`,
     ].join("\n"),
     body_3: [
       header,
       `ROLE: ${slot.role}`,
-      `BEAT: {{body_3}}`,
+      slotScript ? `Spoken line, verbatim: "{{slot_script}}"` : `BEAT: {{body_3}}`,
       `Land the local proof. Name {{place}} as full words ({{state}}, never letters). Set up the end card; do not show the phone number until the end card unless it is already in a photo.`,
     ].join("\n"),
     end_card: [

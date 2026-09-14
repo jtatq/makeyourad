@@ -270,15 +270,20 @@ export function OrderForm({ productId, initialSite }: { productId: ProductId; in
         </section>
 
         <section className="panel p-5 sm:p-7">
-          <h2 className="font-display text-2xl">What the ad should say</h2>
+          <h2 className="font-display text-2xl">What they say</h2>
           <div className="mt-6">
-            <Label htmlFor="brief">Direction</Label>
+            <Label htmlFor="brief">Script</Label>
+            <p className="mt-1 text-sm text-muted">
+              Exact words on camera. We say this copy — we do not rewrite it. Paste the 20-second script, or label both
+              as 20 second: and 40 second:.
+            </p>
             <Textarea
               id="brief"
               required
+              rows={8}
               value={brief}
               onChange={(e) => setBrief(e.target.value)}
-              placeholder="Same-day AC repair. No scare quotes. End on Book a visit."
+              placeholder={`20 second: Massage, facials, nails — all in one relaxing Heber City location. Book a service or build your own spa package.\n\n40 second: Sometimes you don't need another errand. You need a few hours where nobody needs anything from you. …`}
             />
           </div>
           <fieldset className="mt-6">

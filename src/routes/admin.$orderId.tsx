@@ -243,7 +243,7 @@ function Detail({
             <Item label="Platforms" value={order.platforms.join(", ") || "—"} />
             <Item label="Website" value={order.website || "—"} />
             <div className="sm:col-span-2">
-              <Item label="Brief" value={order.brief} />
+              <Item label="Script" value={order.brief} />
             </div>
             {order.mascot_description ? (
               <div className="sm:col-span-2">
