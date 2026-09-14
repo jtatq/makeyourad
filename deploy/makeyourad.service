@@ -1,0 +1,16 @@
+[Unit]
+Description=MakeYourAd
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/makeyourad
+EnvironmentFile=/opt/makeyourad/.env
+ExecStart=/usr/bin/node .output/server/index.mjs
+Restart=always
+RestartSec=3
+MemoryMax=1500M
+
+[Install]
+WantedBy=multi-user.target
