@@ -200,9 +200,10 @@ export function parseAudiencePaste(raw: string): ParsedBriefing {
 }
 
 export function scriptForProduct(parsed: ParsedBriefing, productId: ProductId, fallback: string): string {
-  if (productId === "video-40") return parsed.cameraScript || parsed.voiceoverScript || fallback;
-  if (productId === "video-20") return parsed.voiceoverScript || parsed.socialScript || fallback;
-  return parsed.socialScript || fallback;
+  if (productId === "video-40") return parsed.cameraScript || fallback;
+  if (productId === "video-20") return parsed.voiceoverScript || fallback;
+  if (productId === "video-12") return parsed.socialScript || fallback;
+  return fallback;
 }
 
 export function labeledBriefFromParsed(parsed: ParsedBriefing, fallback: string): string {
@@ -220,9 +221,9 @@ export function parseSummary(parsed: ParsedBriefing): string {
   if (parsed.businessName) bits.push(parsed.businessName);
   if (parsed.categoryLabel) bits.push(parsed.categoryLabel);
   if (parsed.city && parsed.state) bits.push(`${parsed.city}, ${parsed.state}`);
-  if (parsed.voiceoverScript) bits.push("20s script");
-  if (parsed.cameraScript) bits.push("40s script");
-  if (parsed.socialScript) bits.push("12s script");
+  if (parsed.socialScript) bits.push("12s social");
+  if (parsed.voiceoverScript) bits.push("20s voiceover");
+  if (parsed.cameraScript) bits.push("40s camera");
   if (parsed.website) bits.push(parsed.website.replace(/^https?:\/\//, ""));
   return bits.join(" · ");
 }

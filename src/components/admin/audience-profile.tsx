@@ -30,8 +30,8 @@ export function AudienceProfilePaste({ mode, busy, onSubmit }: Props) {
     <section className="panel p-5">
       <h2 className="font-display text-xl">Audience profile</h2>
       <p className="mt-1 text-sm text-muted">
-        Paste the GPT briefing, PAGE_3 JSON, or both. We take business info and the exact 20s / 40s / 12s scripts —
-        not geofences or media-buy targeting.
+        Paste the GPT briefing, PAGE_3 JSON, or both. We split three scripts: short-form social (~12s), voiceover
+        (25–30s → our 20s), camera-facing (55–60s → our 40s). Duration labels never go in the spoken copy.
       </p>
       <div className="mt-4">
         <Label htmlFor="audience-profile">Paste</Label>

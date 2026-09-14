@@ -1,4 +1,4 @@
-export const PRODUCT_IDS = ["video-40", "video-20", "static"] as const;
+export const PRODUCT_IDS = ["video-40", "video-20", "video-12", "static"] as const;
 export type ProductId = (typeof PRODUCT_IDS)[number];
 
 export const TONES = ["energetic", "trustworthy", "premium", "friendly"] as const;
@@ -53,6 +53,16 @@ export const PRODUCTS: Record<ProductId, Product> = {
     blurb: "A talking-head hook, one scene from your photos, and a clear end card — stitched into one 20-second ad.",
     includes: ["20-second MP4", "9:16, 1:1, and 16:9", "End card with your info", "Delivered in 24 hours"],
   },
+  "video-12": {
+    id: "video-12",
+    name: "12-second social",
+    shortName: "12s social",
+    priceCents: 3500,
+    durationSeconds: 12,
+    kind: "video",
+    blurb: "Short-form social from the 10–12s concept. One punchy clip, not a 20s cutdown.",
+    includes: ["12-second MP4", "9:16 master", "End card with your info"],
+  },
   static: {
     id: "static",
     name: "Static ad",
@@ -65,7 +75,7 @@ export const PRODUCTS: Record<ProductId, Product> = {
   },
 };
 
-export const PRODUCT_LIST = PRODUCT_IDS.map((id) => PRODUCTS[id]);
+export const PRODUCT_LIST = (["video-40", "video-20", "static"] as const).map((id) => PRODUCTS[id]);
 
 export function isProductId(value: string): value is ProductId {
   return (PRODUCT_IDS as readonly string[]).includes(value);

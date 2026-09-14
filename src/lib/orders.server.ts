@@ -1,4 +1,4 @@
-import { parseAudiencePaste, labeledBriefFromParsed } from "./briefing";
+import { parseAudiencePaste, scriptForProduct } from "./briefing";
 import { getSql } from "./db";
 import {
   sendDeliveryEmail,
@@ -12,6 +12,7 @@ import {
   requestOrigin,
   signedFileUrl,
 } from "./operator-auth.server";
+import { spokenOnly } from "./script";
 import { PRODUCTS, priceCentsFor, type OrderStatus, type Platform, type ProductId, type Tone } from "./products";
 import { buildPacket, type GenerationPacket, type IntakeForPrompt } from "./prompts/compiler";
 import type { WebsiteFacts } from "./website-profile";
@@ -439,9 +440,10 @@ export async function applyAudienceProfile(orderId: string, raw: string): Promis
   const order = await getOrder(orderId);
   if (!order) throw new Error("Order not found");
   const parsed = parseAudiencePaste(raw);
-  const labeled = labeledBriefFromParsed(parsed, order.brief);
-  const brief = labeled || order.brief;
-  if (brief.trim().length < 12) throw new Error("Profile has no usable script or notes.");
+  const brief = spokenOnly(scriptForProduct(parsed, order.product, ""));
+  if (brief.trim().length < 12) {
+    throw new Error("This paste has no script for this product (12s social, 20s voiceover, or 40s camera-facing).");
+  }
   const sql = await getSql();
   await sql.query(
     `update orders set
@@ -473,9 +475,12 @@ export async function applyAudienceProfile(orderId: string, raw: string): Promis
 
 export async function createOrdersFromProfile(raw: string, email: string): Promise<OrderRow[]> {
   const parsed = parseAudiencePaste(raw);
-  const labeled = labeledBriefFromParsed(parsed, parsed.targetingNotes || "");
-  if (labeled.trim().length < 12) {
-    throw new Error("Paste a GPT audience brief or PAGE_3 JSON with a script or targeting notes.");
+  const products: ProductId[] = [];
+  if (parsed.socialScript) products.push("video-12");
+  if (parsed.voiceoverScript) products.push("video-20");
+  if (parsed.cameraScript) products.push("video-40");
+  if (products.length === 0) {
+    throw new Error("Need AD CONCEPTS: Short-Form Social, Voiceover (25–30s), and/or Camera-Facing.");
   }
   const businessName =
     parsed.businessName ||
@@ -496,13 +501,11 @@ export async function createOrdersFromProfile(raw: string, email: string): Promi
     throw new Error("Profile needs a city and state (Business Address or PAGE_3_PRIMARY_RETAIL_ADDRESS).");
   }
   const phone = parsed.phone || "See website";
-  const products: ProductId[] = [];
-  if (parsed.voiceoverScript || parsed.socialScript) products.push("video-20");
-  if (parsed.cameraScript) products.push("video-40");
-  if (products.length === 0) products.push("video-20");
   const tone: Tone = category === "spa" || category === "salon" ? "premium" : "trustworthy";
   const created: OrderRow[] = [];
   for (const product of products) {
+    const brief = spokenOnly(scriptForProduct(parsed, product, ""));
+    if (brief.length < 8) continue;
     created.push(
       await createOperatorOrder({
         product,
@@ -513,11 +516,12 @@ export async function createOrdersFromProfile(raw: string, email: string): Promi
         website: parsed.website,
         phone,
         email,
-        brief: labeled,
+        brief,
         tone,
       }),
     );
   }
+  if (created.length === 0) throw new Error("No scripts found to build.");
   return created;
 }
 

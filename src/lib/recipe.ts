@@ -51,8 +51,8 @@ export function recipeSlots(opts: {
   const hook: RecipeSlot = {
     id: "hook",
     label: "Hook",
-    duration: opts.productId === "video-40" ? "5s" : "4s",
-    role: "Talking-head open: owner or tech on camera in front of the truck, van, or house, speaking straight to the viewer.",
+    duration: opts.productId === "video-40" ? "5s" : opts.productId === "video-12" ? "3s" : "4s",
+    role: "Talking-head open: owner or tech on camera in front of the truck, van, or house, speaking straight to the viewer. Never say how long the ad is.",
   };
   const mascot: RecipeSlot = {
     id: "mascot",
@@ -69,9 +69,18 @@ export function recipeSlots(opts: {
   const end: RecipeSlot = {
     id: "end_card",
     label: "End card",
-    duration: opts.productId === "video-40" ? "5s" : "6s",
-    role: "Logo, business name, city and full state name, CTA, phone. Hold long enough to read.",
+    duration: opts.productId === "video-40" ? "5s" : opts.productId === "video-12" ? "3s" : "6s",
+    role: "Logo, business name, city and full state name, CTA, phone. Hold long enough to read. Do not speak the runtime.",
   };
+
+  if (opts.productId === "video-12") {
+    return [
+      hook,
+      body(1, "6s", "The rest of the short-form line. Punchy. Never say twelve seconds or any duration."),
+      end,
+      ...(opts.mascot ? [mascot] : []),
+    ];
+  }
 
   if (opts.productId === "video-20") {
     return [
@@ -96,6 +105,9 @@ export function recipeSummary(productId: ProductId, mascot: boolean, tone: Tone)
   if (productId === "static") {
     return `Static ad · ${tone} · one still in 9:16, 1:1, and 16:9.`;
   }
+  if (productId === "video-12") {
+    return `12s social · ${tone} · hook + body + end card.${mascot ? " Mascot is a separate extra video." : ""}`;
+  }
   const seconds = productId === "video-40" ? 40 : 20;
   const bodies = productId === "video-40" ? "hook + 3 body clips + end card, stitched to 40s" : "hook + 1 body clip + end card, stitched to 20s";
   const extra = mascot ? " Mascot is a separate extra video." : "";
@@ -107,6 +119,13 @@ export type StitchClip = { id: Exclude<SlotId, "mascot" | "static">; seconds: nu
 /** Main-timeline clips that concat to the paid 20s / 40s master. Mascot is not included. */
 export function masterClips(productId: ProductId): StitchClip[] {
   if (productId === "static") return [];
+  if (productId === "video-12") {
+    return [
+      { id: "hook", seconds: 3 },
+      { id: "body_1", seconds: 6 },
+      { id: "end_card", seconds: 3 },
+    ];
+  }
   if (productId === "video-20") {
     return [
       { id: "hook", seconds: 4 },

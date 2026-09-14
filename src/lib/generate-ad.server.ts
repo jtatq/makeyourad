@@ -15,7 +15,7 @@ import { TONE_PACKS } from "./prompts/tones";
 import { masterClips, type SlotId } from "./recipe";
 import { inspectClip, pronunciationNote, type AutoQcResult } from "./auto-qc.server";
 import { spokenPlace } from "./intake";
-import { slotScriptLine } from "./script";
+import { extractProductScript, slotScriptLine } from "./script";
 import { PRODUCTS, type Tone } from "./products";
 import { stitchMasterFile } from "./stitch.server";
 
@@ -247,12 +247,15 @@ function stillPrompt(packet: GenerationPacket, slot: GenerationPacket["recipe"][
     `Business: ${i.businessName}, ${i.category_label} in ${spokenPlace(i.city, i.state)}.`,
     `Slot: ${slot.label}. ${slot.role}`,
     `Tone: ${i.tone}. ${packet.recipe.structure}`,
-    i.brief ? `EXACT SCRIPT (speak these words, do not paraphrase): ${i.brief}` : "",
+    slotScriptLine(i.brief, packet.product, slot.id)
+      ? `EXACT SCRIPT for this shot only (speak these words, do not paraphrase): ${slotScriptLine(i.brief, packet.product, slot.id)}`
+      : "",
     site?.tagline ? `Tagline: ${site.tagline}` : "",
     site?.services?.length ? `Services: ${site.services.slice(0, 6).join(", ")}` : "",
     site?.about ? `About: ${site.about.slice(0, 280)}` : "",
     `Use the real business. Do not invent a different company or a celebrity.`,
     `No watermarks, no agency slogans, no UI chrome.`,
+    `Never speak the ad length. Never say twelve seconds, twenty seconds, forty seconds, or any runtime.`,
   ];
   if (slot.id === "end_card" || slot.id === "static") {
     lines.push(
@@ -294,11 +297,11 @@ function motionPrompt(
           .join(" ")
       : "Slow, confident camera. Keep type readable if present.";
   return [
-    `Animate this advertisement frame as a ${seconds}-second ${slot.label.toLowerCase()} clip.`,
+    `Animate this advertisement frame. Clip length for editing is ${seconds} seconds — that is timing only. Do not speak the length.`,
     slot.role,
     `Tone: ${tone}. ${talking}`,
     `Photoreal, no morphing logos, no extra text, no watermarks.`,
-    `Hard stop at ${seconds} seconds.`,
+    `Never say twelve seconds, twenty seconds, forty seconds, or any runtime. Hard cut when the line is done.`,
   ].join(" ");
 }
 
@@ -316,7 +319,8 @@ function imagineStillPrompt(
     `The look is ${i.tone}: ${tone.picture}`,
   ];
   if (i.brief.trim()) {
-    parts.push(`EXACT SCRIPT (speak these words, not an idea): ${i.brief.trim()}`);
+    const line = slotScriptLine(i.brief, packet.product, slot.id) || extractProductScript(i.brief, packet.product);
+    if (line) parts.push(`EXACT SCRIPT for this shot (speak these words, not an idea): ${line}`);
   }
   if (site?.tagline) parts.push(`Their line: ${site.tagline}.`);
   if (site?.services?.length) parts.push(`Services: ${site.services.slice(0, 5).join(", ")}.`);
@@ -361,12 +365,12 @@ function imagineMotionPrompt(
           .join(" ")
       : "Slow, confident camera, subject stays recognizable, type stays readable.";
   return [
-    `Animate this advertisement frame as a ${seconds}-second ${slot.label.toLowerCase()} clip.`,
+    `Animate this advertisement frame. Clip length for editing is ${seconds} seconds — that is timing only. Do not speak the length.`,
     slot.role,
     pack.picture,
     talking,
     "Photoreal, no morphing logos, no extra text, no watermarks.",
-    `Hard stop at ${seconds} seconds.`,
+    "Never say twelve seconds, twenty seconds, forty seconds, or any runtime. Hard cut when the line is done.",
   ].join(" ");
 }
 
