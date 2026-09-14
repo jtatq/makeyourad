@@ -451,6 +451,31 @@ export function clipQcSummary(order: OrderRow, job: GenerationJob) {
   };
 }
 
+async function discardSlotAssets(orderId: string, slotId: SlotId) {
+  const sql = await getSql();
+  await sql.query(
+    `delete from order_assets
+      where order_id = $1
+        and kind in ('still','delivery')
+        and (
+          filename like $2
+          or filename like $3
+          or ($4 = true and (filename like '%-20s.mp4' or filename like '%-40s.mp4'))
+          or ($5 = true and filename like '%-mascot.mp4')
+        )`,
+    [orderId, `${slotId}-gen.%`, `${slotId}-gen-%`, slotId !== "mascot" && slotId !== "static", slotId === "mascot"],
+  );
+}
+
+function emptySlotMedia(slot: GenSlotState) {
+  slot.stillUrl = undefined;
+  slot.videoUrl = undefined;
+  slot.videoRequestId = undefined;
+  slot.claimedAt = undefined;
+  slot.error = undefined;
+  slot.status = "queued";
+}
+
 export async function reviewSlot(
   orderId: string,
   slotId: SlotId,
@@ -463,12 +488,26 @@ export async function reviewSlot(
   if (!job) throw new Error("No clips to review yet");
   const slot = job.slots.find((s) => s.id === slotId);
   if (!slot) throw new Error("Unknown clip");
-  if (!slot.videoUrl && !slot.stillUrl) throw new Error("That clip is not ready yet");
+  if (verdict === "pass" && !slot.videoUrl && !slot.stillUrl) {
+    throw new Error("That clip is not ready yet");
+  }
+  if (verdict === "fix" && slot.qc === "fix" && !slot.videoUrl && !slot.stillUrl) {
+    slot.qcNote = note?.trim() || slot.qcNote;
+    await saveGeneration(orderId, job);
+    return { job, order, stitch: null };
+  }
+  if (verdict === "fix" && !slot.videoUrl && !slot.stillUrl) {
+    throw new Error("Nothing to discard");
+  }
   slot.qc = verdict;
   slot.qcNote = note?.trim() || slot.qcNote;
   if (verdict === "fix") {
+    await discardSlotAssets(orderId, slotId);
+    emptySlotMedia(slot);
     job.masterUrl = undefined;
     job.assembleRequested = false;
+    if (slotId === "mascot") job.mascotUrl = undefined;
+    job.status = job.slots.every((s) => s.status === "done") ? "done" : "running";
   }
   await saveGeneration(orderId, job);
   await appendEvent(
@@ -476,7 +515,7 @@ export async function reviewSlot(
     "qc",
     verdict === "pass"
       ? `Passed QC · ${slot.label}.`
-      : `Needs fix · ${slot.label}${slot.qcNote ? ` · ${slot.qcNote}` : ""}.`,
+      : `Discarded failed clip · ${slot.label}${slot.qcNote ? ` · ${slot.qcNote}` : ""}.`,
     "admin",
   );
   return { job, order, stitch: stitchIfReady(order, job) };
@@ -501,17 +540,14 @@ export async function regenSlot(
     if (slot.motionPrompt && !slot.motionPrompt.includes(extra)) slot.motionPrompt += add;
   }
   slot.status = "queued";
-  slot.stillUrl = undefined;
-  slot.videoUrl = undefined;
-  slot.videoRequestId = undefined;
-  slot.claimedAt = undefined;
-  slot.error = undefined;
+  emptySlotMedia(slot);
   slot.qc = "fix";
   job.status = "running";
   job.error = undefined;
   job.masterUrl = undefined;
   job.assembleRequested = false;
   if (slotId === "mascot") job.mascotUrl = undefined;
+  await discardSlotAssets(orderId, slotId);
   await saveGeneration(orderId, job);
   await appendEvent(orderId, "generate", `Redo · ${slot.label}${extra ? ` · ${extra}` : ""}.`, "admin");
   if (generationEngine() === "xai") {

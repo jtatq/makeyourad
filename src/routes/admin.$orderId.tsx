@@ -298,7 +298,10 @@ function Detail({
                         </span>
                       </div>
                       {s.error ? <p className="mt-1 text-xs text-danger">{s.error}</p> : null}
-                      {playable ? (
+                      {s.qc === "fix" && !playable ? (
+                        <p className="mt-2 text-sm text-danger">Failed clip discarded. It will not go in the master.</p>
+                      ) : null}
+                      {playable && s.qc !== "fix" ? (
                         <div className="mt-2 max-h-[52vh] overflow-hidden rounded-md bg-elevated">
                           {s.videoUrl ? (
                             <video
@@ -340,7 +343,7 @@ function Detail({
                               )
                             }
                           >
-                            Needs fix
+                            Needs fix · discard
                           </Button>
                         </div>
                       ) : null}
