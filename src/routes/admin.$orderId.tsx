@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { hoursLabel, StatusPill } from "@/components/admin/status-pill";
 import { StudioDeck } from "@/components/admin/studio-deck";
 import { AudienceProfilePaste } from "@/components/admin/audience-profile";
@@ -83,6 +83,8 @@ function Detail({
   const [deliverTo, setDeliverTo] = useState(order.email);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
 
   async function run(label: string, fn: () => Promise<unknown>) {
     setBusy(label);
@@ -105,12 +107,13 @@ function Detail({
     if (generation?.status !== "running") return;
     const viaApi = (generation.engine ?? engine) === "xai";
     const t = window.setInterval(() => {
+      if (busyRef.current) return;
       if (viaApi) {
         void run("generate", () => adminGenerate({ data: { id: order.id, action: "tick" } }));
       } else {
         void router.invalidate();
       }
-    }, viaApi ? 2800 : 2500);
+    }, viaApi ? 5000 : 4000);
     return () => window.clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [generation?.status, generation?.engine, engine, order.id]);
@@ -207,7 +210,7 @@ function Detail({
               masterUrl={generation?.masterUrl}
               busy={busy !== null}
               stitching={busy === "assemble"}
-              canGenerate={canGenerate}
+              canGenerate={canGenerate && !generating}
               generateLabel={generateLabel}
               direction={direction || generation?.direction || ""}
               onDirection={setDirection}
@@ -263,11 +266,7 @@ function Detail({
                       id: order.id,
                       action: "start",
                       direction: (direction || generation?.direction || "").trim() || undefined,
-                      force:
-                        generating ||
-                        generation?.status === "done" ||
-                        generation?.status === "error" ||
-                        stuckWaiting,
+                      force: generation?.status === "error",
                     },
                   }),
                 )

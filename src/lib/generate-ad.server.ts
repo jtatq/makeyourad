@@ -454,34 +454,29 @@ async function generateStill(prompt: string, ref: string | null): Promise<string
 
 async function startVideo(prompt: string, imageUrl: string, duration: number): Promise<string> {
   const cap = apiVideoSeconds(duration);
-  const tries = [...new Set([cap, 15, 10, 6])].filter((d) => d >= 6 && d <= 15);
-  let lastMsg = "xAI video error";
-  for (const d of tries) {
-    const payload: Record<string, unknown> = {
-      model: VIDEO_MODEL,
-      prompt,
-      duration: d,
-      resolution: "1080p",
-      image: { url: imageUrl },
-    };
-    let res = await xaiFetch("/videos/generations", { method: "POST", body: JSON.stringify(payload) });
-    if (!res.ok) {
-      delete payload.resolution;
-      res = await xaiFetch("/videos/generations", { method: "POST", body: JSON.stringify(payload) });
-    }
-    const body: unknown = await res.json().catch(() => null);
-    if (res.ok) {
-      const rec = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
-      const id = (typeof rec.request_id === "string" && rec.request_id) || (typeof rec.id === "string" && rec.id) || "";
-      if (id) return id;
-      lastMsg = "Video generation returned no request id";
-      continue;
-    }
-    lastMsg =
-      body && typeof body === "object" && "error" in body
-        ? JSON.stringify((body as { error: unknown }).error)
-        : `xAI video error ${res.status}`;
+  const payload: Record<string, unknown> = {
+    model: VIDEO_MODEL,
+    prompt,
+    duration: cap,
+    resolution: "1080p",
+    image: { url: imageUrl },
+  };
+  let res = await xaiFetch("/videos/generations", { method: "POST", body: JSON.stringify(payload) });
+  if (!res.ok) {
+    delete payload.resolution;
+    res = await xaiFetch("/videos/generations", { method: "POST", body: JSON.stringify(payload) });
   }
+  const body: unknown = await res.json().catch(() => null);
+  if (res.ok) {
+    const rec = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+    const id = (typeof rec.request_id === "string" && rec.request_id) || (typeof rec.id === "string" && rec.id) || "";
+    if (id) return id;
+    throw new Error("Video generation returned no request id");
+  }
+  const lastMsg =
+    body && typeof body === "object" && "error" in body
+      ? JSON.stringify((body as { error: unknown }).error)
+      : `xAI video error ${res.status}`;
   throw new Error(lastMsg.slice(0, 280));
 }
 
@@ -647,27 +642,17 @@ async function applyAutoQc(order: OrderRow, job: GenerationJob, slot: GenSlotSta
     slot.autoQc = result;
     if (result.status === "pass") {
       await appendEvent(order.id, "qc", `Auto QC recommends keep · ${slot.label}.`, actor);
-    } else if (result.status === "fail") {
-      const note = result.checks
-        .filter((c) => !c.ok)
-        .map((c) => c.detail)
-        .join(" ")
-        .slice(0, 280);
-      await discardSlotAssets(order.id, slot, job);
-      emptySlotMedia(slot);
-      slot.qc = "fix";
-      slot.qcNote = note;
-      job.timeline = (job.timeline ?? []).filter((c) => c.slotId !== slot.id);
-      await appendEvent(order.id, "qc", `Cut from library · ${slot.label} · ${note}`, actor);
     } else {
       const note = result.checks
         .filter((c) => !c.ok)
-        .map((c) => c.label)
-        .join(", ");
+        .map((c) => c.detail || c.label)
+        .join(" ")
+        .slice(0, 280);
+      slot.qcNote = note || slot.qcNote;
       await appendEvent(
         order.id,
         "qc",
-        `Auto QC needs review · ${slot.label}${note ? ` · ${note}` : ""}.`,
+        `Auto QC needs review · ${slot.label}${note ? ` · ${note}` : ""}. Keep the take until you cut it.`,
         actor,
       );
     }
@@ -1132,7 +1117,26 @@ export async function completeImagineSlot(opts: {
   return { job, order: fresh, stitch: opts.kind === "video" ? stitchIfReady(fresh, job) : null };
 }
 
+const tickLocks = new Map<string, Promise<unknown>>();
+
 export async function tickGeneration(
+  orderId: string,
+  opts: { action: "start" | "tick"; force?: boolean; direction?: string },
+): Promise<{ job: GenerationJob; order: OrderRow }> {
+  const run = () => tickGenerationLocked(orderId, opts);
+  const prev = tickLocks.get(orderId) ?? Promise.resolve();
+  const next = prev.then(run, run);
+  tickLocks.set(
+    orderId,
+    next.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return next;
+}
+
+async function tickGenerationLocked(
   orderId: string,
   opts: { action: "start" | "tick"; force?: boolean; direction?: string },
 ): Promise<{ job: GenerationJob; order: OrderRow }> {
@@ -1163,10 +1167,16 @@ export async function tickGeneration(
   }
 
   let job = await loadGeneration(orderId);
+  const live = job?.slots.some(
+    (s) =>
+      !s.videoUrl &&
+      (s.status === "still" || s.status === "video") &&
+      (Boolean(s.videoRequestId) || claimIsFresh(s)),
+  );
 
   if (opts.action === "start") {
-    if (job?.status === "running" && !opts.force) {
-      // fall through
+    if (live || (job?.status === "running" && !opts.force)) {
+      // One clip at a time. Never restart over an in-flight still/video.
     } else {
       if (order.status === "paid") {
         order = await claimOrder(orderId, "grok");
@@ -1211,6 +1221,13 @@ export async function tickGeneration(
     return { job, order: (await getOrder(orderId))! };
   }
 
+  if (slot.videoUrl) {
+    slot.status = "done";
+    finishIfDone(job);
+    await saveGeneration(orderId, job);
+    return { job, order: (await getOrder(orderId))! };
+  }
+
   const recipeSlot = packet.recipe.slots.find((s) => s.id === slot.id);
   if (!recipeSlot) {
     slot.status = "error";
@@ -1222,7 +1239,11 @@ export async function tickGeneration(
 
   try {
     if (slot.status === "queued" || (slot.status === "still" && !slot.stillUrl)) {
+      if (slot.status === "still" && claimIsFresh(slot)) {
+        return { job, order: (await getOrder(orderId))! };
+      }
       slot.status = "still";
+      slot.claimedAt = new Date().toISOString();
       await saveGeneration(orderId, job);
       const ref = await referenceUri(orderId, slot.id === "end_card" || slot.id === "static");
       const url = await generateStill(slot.stillPrompt || stillPrompt(packet, recipeSlot, ratio), ref);
@@ -1239,6 +1260,9 @@ export async function tickGeneration(
         slot.status = "done";
         await applyAutoQc(order, job, slot);
       } else {
+        slot.status = "video";
+        slot.claimedAt = new Date().toISOString();
+        await saveGeneration(orderId, job);
         const vidId = await startVideo(
           slot.motionPrompt ||
             motionPrompt(
@@ -1253,8 +1277,6 @@ export async function tickGeneration(
           slot.duration,
         );
         slot.videoRequestId = vidId;
-        slot.claimedAt = new Date().toISOString();
-        slot.status = "video";
         await appendEvent(orderId, "generate", `Animating ${slot.label} (${slot.duration}s API take).`, "grok");
       }
     } else if (slot.status === "video") {
@@ -1262,7 +1284,12 @@ export async function tickGeneration(
         throw new Error("Video timed out after 18 minutes");
       }
       if (!slot.videoRequestId) {
+        if (claimIsFresh(slot)) {
+          return { job, order: (await getOrder(orderId))! };
+        }
         if (!slot.stillUrl) throw new Error("Missing still for video");
+        slot.claimedAt = new Date().toISOString();
+        await saveGeneration(orderId, job);
         slot.videoRequestId = await startVideo(
           slot.motionPrompt ||
             motionPrompt(

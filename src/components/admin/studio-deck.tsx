@@ -239,7 +239,7 @@ export function StudioDeck({
         <div>
           <p className="font-display text-xl">Studio</p>
           <p className="text-xs uppercase tracking-wider text-muted">
-            {targetSeconds}s master · {fmt(total)} on the timeline
+            {targetSeconds}s master · {fmt(total)} on the timeline · one 15s video per generate
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
