@@ -219,6 +219,7 @@ function Detail({
               {generation.floor.note ? ` · ${generation.floor.note}` : ""}
             </p>
           ) : null}
+          {order.product !== "video-20" ? (
             <p className="mt-2 text-sm text-warn">
               20s spots only right now. Generate is off on 12s and 40s jobs so they cannot hang the API.
             </p>
