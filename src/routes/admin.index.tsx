@@ -1,9 +1,10 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
+import { AudienceProfilePaste } from "@/components/admin/audience-profile";
 import { hoursLabel, slaTone, StatusPill } from "@/components/admin/status-pill";
 import { Mark } from "@/components/layout/site-chrome";
 import { Button } from "@/components/ui/button";
-import { adminDashboard, adminLogout, adminSendSla } from "@/lib/admin.functions";
+import { adminCreateFromProfile, adminDashboard, adminLogout, adminSendSla } from "@/lib/admin.functions";
 import { PRODUCTS, type OrderStatus } from "@/lib/products";
 import { formatUsd } from "@/lib/utils";
 
@@ -16,6 +17,8 @@ function QueuePage() {
   const dashboard = Route.useLoaderData();
   const router = useRouter();
   const [filter, setFilter] = useState<OrderStatus | "all">("all");
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileError, setProfileError] = useState("");
   const sla = dashboard.sla;
   const orders =
     filter === "all" ? dashboard.orders : dashboard.orders.filter((o) => o.status === filter);
@@ -96,6 +99,30 @@ function QueuePage() {
             SLA clear. {sla.open_count} open. 24-hour clock starts at payment.
           </div>
         )}
+
+        <div className="mb-6">
+          {profileError ? <p className="mb-2 text-sm text-danger">{profileError}</p> : null}
+          <AudienceProfilePaste
+            mode="create"
+            busy={profileBusy}
+            onSubmit={async (raw) => {
+              setProfileBusy(true);
+              setProfileError("");
+              try {
+                const created = await adminCreateFromProfile({ data: { raw } });
+                await router.invalidate();
+                const first = created[0];
+                if (first) {
+                  await router.navigate({ to: "/admin/$orderId", params: { orderId: first.id } });
+                }
+              } catch (err) {
+                setProfileError(err instanceof Error ? err.message : "Could not create jobs");
+              } finally {
+                setProfileBusy(false);
+              }
+            }}
+          />
+        </div>
 
         <div className="flex flex-wrap gap-2">
           {(["all", "paid", "in_production", "qc", "needs_attention", "delivered"] as const).map((key) => (

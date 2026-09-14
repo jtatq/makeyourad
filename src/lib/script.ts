@@ -1,9 +1,10 @@
+import { parseAudiencePaste, scriptForProduct } from "./briefing";
 import type { ProductId } from "./products";
 import { masterClips } from "./recipe";
 
-function labeledSection(brief: string, seconds: 20 | 40): string | null {
+function labeledSection(brief: string, seconds: 12 | 20 | 40): string | null {
   const re = new RegExp(
-    String.raw`${seconds}\s*seconds?\s*[:\-–]\s*([\s\S]*?)(?=(?:20|40)\s*seconds?\s*[:\-–]|$)`,
+    String.raw`${seconds}\s*seconds?\s*[:\-–]\s*([\s\S]*?)(?=(?:12|20|40)\s*seconds?\s*[:\-–]|$)`,
     "i",
   );
   const m = brief.match(re);
@@ -11,12 +12,15 @@ function labeledSection(brief: string, seconds: 20 | 40): string | null {
   return body.length > 8 ? body : null;
 }
 
-/** Pull the 20s or 40s block when both are pasted; otherwise the whole brief. */
+/** Pull the 20s or 40s block from a labeled brief, GPT briefing, or PAGE_3 paste. */
 export function extractProductScript(brief: string, productId: ProductId): string {
   const text = brief.trim();
   if (!text) return "";
+  const parsed = parseAudiencePaste(text);
+  const fromProfile = scriptForProduct(parsed, productId, "");
+  if (fromProfile) return fromProfile;
   if (productId === "video-40") return labeledSection(text, 40) || labeledSection(text, 20) || text;
-  if (productId === "video-20") return labeledSection(text, 20) || text;
+  if (productId === "video-20") return labeledSection(text, 20) || labeledSection(text, 12) || text;
   return text;
 }
 
@@ -27,7 +31,7 @@ export function slotScripts(script: string, productId: ProductId): Record<string
   const sentences = script
     .split(/\n+/)
     .flatMap((line) => line.split(/(?<=[.!?])\s+/))
-    .map((s) => s.replace(/^(20|40)\s*seconds?\s*[:\-–]\s*/i, "").trim())
+    .map((s) => s.replace(/^(12|20|40)\s*seconds?\s*[:\-–]\s*/i, "").trim())
     .filter(Boolean);
   if (sentences.length === 0) {
     out[clips[0].id] = script;

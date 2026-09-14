@@ -16,8 +16,10 @@ import {
   tickGeneration,
 } from "./generate-ad.server";
 import {
+  applyAudienceProfile,
   attachFiles,
   claimOrder,
+  createOrdersFromProfile,
   deliverOrder,
   flagOrder,
   getOrder,
@@ -41,7 +43,7 @@ import {
   signedFileUrl,
   tokenMatches,
 } from "./operator-auth.server";
-import { isWorkspacePreview } from "./env.server";
+import { env, isWorkspacePreview } from "./env.server";
 
 function requireAdmin() {
   const request = getRequest();
@@ -143,6 +145,21 @@ export const adminGenerate = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     requireAdmin();
     return tickGeneration(data.id, { action: data.action, force: data.force });
+  });
+
+export const adminApplyProfile = createServerFn({ method: "POST" })
+  .validator(z.object({ id: z.string(), raw: z.string().min(20).max(20000) }))
+  .handler(async ({ data }) => {
+    requireAdmin();
+    return applyAudienceProfile(data.id, data.raw);
+  });
+
+export const adminCreateFromProfile = createServerFn({ method: "POST" })
+  .validator(z.object({ raw: z.string().min(20).max(20000) }))
+  .handler(async ({ data }) => {
+    requireAdmin();
+    const email = env("OPERATOR_EMAIL") || env("FROM_EMAIL") || "hello@makeyourad.com";
+    return createOrdersFromProfile(data.raw, email);
   });
 
 const SlotIdSchema = z.enum(["hook", "mascot", "body_1", "body_2", "body_3", "end_card", "static"]);

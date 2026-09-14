@@ -2,11 +2,13 @@ import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { hoursLabel, StatusPill } from "@/components/admin/status-pill";
 import { StudioDeck } from "@/components/admin/studio-deck";
+import { AudienceProfilePaste } from "@/components/admin/audience-profile";
 import { Mark } from "@/components/layout/site-chrome";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Textarea } from "@/components/ui/input";
 import {
   adminAssemble,
+  adminApplyProfile,
   adminAttach,
   adminClaim,
   adminDeliver,
@@ -176,9 +178,16 @@ function Detail({
             {order.state}
           </p>
           {generation?.error ? <p className="mt-2 text-sm text-danger">{generation.error}</p> : null}
-          {error && (busy === "generate" || busy === "assemble" || busy === "timeline") ? (
+          {error && (busy === "generate" || busy === "assemble" || busy === "timeline" || busy === "profile") ? (
             <p className="mt-2 text-sm text-danger">{error}</p>
           ) : null}
+          <div className="mt-6">
+            <AudienceProfilePaste
+              mode="apply"
+              busy={busy !== null}
+              onSubmit={(raw) => run("profile", () => adminApplyProfile({ data: { id: order.id, raw } }))}
+            />
+          </div>
           <div className="mt-6">
             <StudioDeck
               takes={studioTakes}

@@ -1,3 +1,4 @@
+import { parseAudiencePaste, labeledBriefFromParsed } from "./briefing";
 import { getSql } from "./db";
 import {
   sendDeliveryEmail,
@@ -387,6 +388,137 @@ export async function claimOrder(id: string, actor = "operator"): Promise<OrderR
   const next = await getOrder(id);
   if (!next) throw new Error("Order not found");
   return next;
+}
+
+export async function createOperatorOrder(input: {
+  product: ProductId;
+  businessName: string;
+  category: string;
+  city: string;
+  state: string;
+  website?: string | null;
+  phone: string;
+  email: string;
+  brief: string;
+  tone?: Tone;
+  platforms?: Platform[];
+}): Promise<OrderRow> {
+  const sql = await getSql();
+  const id = makeId("ord");
+  const platforms = input.platforms?.length ? input.platforms : (["instagram", "facebook"] as Platform[]);
+  const tone = input.tone ?? "trustworthy";
+  await sql.query(
+    `insert into orders (
+      id, product, add_ons, price_cents, business_name, category, city, state, website,
+      phone, email, brief, tone, platforms, status
+    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'paid')`,
+    [
+      id,
+      input.product,
+      JSON.stringify([]),
+      priceCentsFor(input.product, false),
+      input.businessName,
+      input.category,
+      input.city,
+      input.state,
+      input.website ?? null,
+      input.phone,
+      input.email,
+      input.brief,
+      tone,
+      JSON.stringify(platforms),
+    ],
+  );
+  await appendEvent(id, "paid", "Operator job from audience profile.", "admin");
+  const order = await getOrder(id);
+  if (!order) throw new Error("Order insert failed");
+  return order;
+}
+
+export async function applyAudienceProfile(orderId: string, raw: string): Promise<OrderRow> {
+  const order = await getOrder(orderId);
+  if (!order) throw new Error("Order not found");
+  const parsed = parseAudiencePaste(raw);
+  const labeled = labeledBriefFromParsed(parsed, order.brief);
+  const brief = labeled || order.brief;
+  if (brief.trim().length < 12) throw new Error("Profile has no usable script or notes.");
+  const sql = await getSql();
+  await sql.query(
+    `update orders set
+      business_name = coalesce(nullif($2,''), business_name),
+      category = coalesce(nullif($3,''), category),
+      city = coalesce(nullif($4,''), city),
+      state = coalesce(nullif($5,''), state),
+      website = coalesce(nullif($6,''), website),
+      phone = coalesce(nullif($7,''), phone),
+      brief = $8,
+      updated_at = now()
+     where id = $1`,
+    [
+      orderId,
+      parsed.businessName ?? "",
+      parsed.categoryId ?? "",
+      parsed.city ?? "",
+      parsed.state ?? "",
+      parsed.website ?? "",
+      parsed.phone ?? "",
+      brief.slice(0, 16000),
+    ],
+  );
+  await appendEvent(orderId, "profile", "Audience profile applied. Scripts are now the spoken copy.", "admin");
+  const next = await getOrder(orderId);
+  if (!next) throw new Error("Order not found");
+  return next;
+}
+
+export async function createOrdersFromProfile(raw: string, email: string): Promise<OrderRow[]> {
+  const parsed = parseAudiencePaste(raw);
+  const labeled = labeledBriefFromParsed(parsed, parsed.targetingNotes || "");
+  if (labeled.trim().length < 12) {
+    throw new Error("Paste a GPT audience brief or PAGE_3 JSON with a script or targeting notes.");
+  }
+  const businessName =
+    parsed.businessName ||
+    (parsed.website
+      ? parsed.website
+          .replace(/^https?:\/\//, "")
+          .replace(/^www\./, "")
+          .split("/")[0]
+          .split(".")[0]
+          .replace(/[-_]+/g, " ")
+          .replace(/\b\w/g, (c) => c.toUpperCase())
+      : "");
+  if (!businessName) throw new Error("Profile needs a business name (Business Name in the briefing).");
+  const category = parsed.categoryId || "spa";
+  const city = parsed.city;
+  const state = parsed.state;
+  if (!city || !state) {
+    throw new Error("Profile needs a city and state (Business Address or PAGE_3_PRIMARY_RETAIL_ADDRESS).");
+  }
+  const phone = parsed.phone || "See website";
+  const products: ProductId[] = [];
+  if (parsed.voiceoverScript || parsed.socialScript) products.push("video-20");
+  if (parsed.cameraScript) products.push("video-40");
+  if (products.length === 0) products.push("video-20");
+  const tone: Tone = category === "spa" || category === "salon" ? "premium" : "trustworthy";
+  const created: OrderRow[] = [];
+  for (const product of products) {
+    created.push(
+      await createOperatorOrder({
+        product,
+        businessName,
+        category,
+        city,
+        state,
+        website: parsed.website,
+        phone,
+        email,
+        brief: labeled,
+        tone,
+      }),
+    );
+  }
+  return created;
 }
 
 export async function attachFiles(
