@@ -12,6 +12,7 @@ import {
   regenSlot,
   reviewSlot,
   runAutoQc,
+  saveTimeline,
   tickGeneration,
 } from "./generate-ad.server";
 import {
@@ -178,6 +179,27 @@ export const adminAssemble = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     requireAdmin();
     return assembleMaster(data.id);
+  });
+
+export const adminSaveTimeline = createServerFn({ method: "POST" })
+  .validator(
+    z.object({
+      id: z.string(),
+      clips: z.array(
+        z.object({
+          id: z.string(),
+          slotId: z.string(),
+          label: z.string(),
+          url: z.string(),
+          stillUrl: z.string().optional(),
+          seconds: z.number().positive(),
+        }),
+      ),
+    }),
+  )
+  .handler(async ({ data }) => {
+    requireAdmin();
+    return saveTimeline(data.id, data.clips);
   });
 
 export const adminAutoQc = createServerFn({ method: "POST" })

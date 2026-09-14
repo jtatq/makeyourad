@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { hoursLabel, StatusPill } from "@/components/admin/status-pill";
+import { CutTimeline } from "@/components/admin/cut-timeline";
 import { Mark } from "@/components/layout/site-chrome";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Textarea } from "@/components/ui/input";
@@ -17,6 +18,7 @@ import {
   adminRefund,
   adminRegenSlot,
   adminRemake,
+  adminSaveTimeline,
   adminSession,
   adminSlotQc,
 } from "@/lib/admin.functions";
@@ -129,6 +131,16 @@ function Detail({
       }),
   );
   const allClipsPassed = clipsReady && qcOpen.length === 0;
+  const timelineReady = Boolean(generation?.timeline && generation.timeline.length > 0);
+  const takes = (generation?.slots ?? [])
+    .filter((s) => s.videoUrl)
+    .map((s) => ({
+      slotId: s.id,
+      label: s.label,
+      url: s.videoUrl as string,
+      stillUrl: s.stillUrl,
+      seconds: s.targetSeconds || s.duration || 6,
+    }));
 
 
   return (
@@ -416,20 +428,39 @@ function Detail({
                 })}
               </ol>
             ) : null}
-            {generation && clipsReady && !allClipsPassed ? (
-              <p className="mt-4 text-sm text-warn">
-                {qcOpen.join(", ")} still {qcOpen.length === 1 ? "needs" : "need"} to make the cut before the{" "}
-                {PRODUCTS[order.product]?.durationSeconds ?? 20}s stitch.
-              </p>
+            {generation && takes.length > 0 ? (
+              <CutTimeline
+                takes={takes}
+                timeline={generation.timeline ?? []}
+                targetSeconds={PRODUCTS[order.product]?.durationSeconds ?? 20}
+                busy={busy !== null}
+                onSave={(clips) =>
+                  run("timeline", () => adminSaveTimeline({ data: { id: order.id, clips } }))
+                }
+                onCutFromLibrary={(slotId) =>
+                  void run("qc-slot", () =>
+                    adminSlotQc({
+                      data: {
+                        id: order.id,
+                        slotId: slotId as "hook" | "mascot" | "body_1" | "body_2" | "body_3" | "end_card" | "static",
+                        verdict: "fix",
+                      },
+                    }),
+                  )
+                }
+              />
             ) : null}
-            {generation && allClipsPassed ? (
+            {generation && takes.length > 0 && !timelineReady && !allClipsPassed ? (
+              <p className="mt-4 text-sm text-warn">Drag the takes you want onto FINAL CLIP, in play order.</p>
+            ) : null}
+            {generation && (timelineReady || allClipsPassed) ? (
               <div className="mt-4">
                 <Button
                   className="w-full"
                   disabled={busy !== null}
                   onClick={() => void run("assemble", () => adminAssemble({ data: { id: order.id } }))}
                 >
-                  Stitch the {PRODUCTS[order.product]?.durationSeconds ?? 20}s from the cut
+                  Stitch the FINAL CLIP
                 </Button>
               </div>
             ) : null}

@@ -38,6 +38,15 @@ export type GenSlotState = {
   assetIds?: string[];
 };
 
+export type TimelineClip = {
+  id: string;
+  slotId: string;
+  label: string;
+  url: string;
+  stillUrl?: string;
+  seconds: number;
+};
+
 export type GenerationJob = {
   status: "idle" | "running" | "done" | "error";
   engine: GenEngine;
@@ -47,6 +56,7 @@ export type GenerationJob = {
   masterUrl?: string;
   mascotUrl?: string;
   assembleRequested?: boolean;
+  timeline?: TimelineClip[];
   slots: GenSlotState[];
 };
 
@@ -54,7 +64,7 @@ export type StitchRequest = {
   filename: string;
   durationSeconds: number;
   aspectRatio: "9:16" | "1:1" | "16:9";
-  clips: Array<{ slotId: SlotId; seconds: number; url: string }>;
+  clips: Array<{ slotId: string; seconds: number; url: string }>;
 };
 
 export type ImagineWork = {
@@ -429,6 +439,19 @@ function jobAspect(order: OrderRow): StitchRequest["aspectRatio"] {
 export function stitchIfReady(order: OrderRow, job: GenerationJob): StitchRequest | null {
   if (order.product === "static") return null;
   if (job.masterUrl) return null;
+  if (job.timeline) {
+    if (job.timeline.length === 0) return null;
+    const ready = job.timeline.filter((c) => c.url);
+    if (ready.length === 0) return null;
+    const durationSeconds =
+      PRODUCTS[order.product].durationSeconds ?? ready.reduce((n, c) => n + c.seconds, 0);
+    return {
+      filename: `${businessSlug(order.business_name)}-${durationSeconds}s.mp4`,
+      durationSeconds,
+      aspectRatio: jobAspect(order),
+      clips: ready.map((c) => ({ slotId: c.slotId, seconds: c.seconds, url: c.url })),
+    };
+  }
   const clips = masterClips(order.product);
   if (clips.length === 0) return null;
   const ready: StitchRequest["clips"] = [];
@@ -445,6 +468,27 @@ export function stitchIfReady(order: OrderRow, job: GenerationJob): StitchReques
     aspectRatio: jobAspect(order),
     clips: ready,
   };
+}
+
+export async function saveTimeline(
+  orderId: string,
+  clips: TimelineClip[],
+): Promise<{ job: GenerationJob; order: OrderRow }> {
+  const order = await getOrder(orderId);
+  if (!order) throw new Error("Order not found");
+  const job = await loadGeneration(orderId);
+  if (!job) throw new Error("No clips to sequence");
+  job.timeline = clips.filter((c) => c.url && c.seconds > 0);
+  job.masterUrl = undefined;
+  job.assembleRequested = false;
+  await saveGeneration(orderId, job);
+  await appendEvent(
+    orderId,
+    "generate",
+    `Timeline · ${job.timeline.map((c) => c.label).join(" → ") || "empty"}.`,
+    "admin",
+  );
+  return { job, order };
 }
 
 export function clipQcSummary(order: OrderRow, job: GenerationJob) {
@@ -539,6 +583,7 @@ async function applyAutoQc(order: OrderRow, job: GenerationJob, slot: GenSlotSta
       emptySlotMedia(slot);
       slot.qc = "fix";
       slot.qcNote = note;
+      job.timeline = (job.timeline ?? []).filter((c) => c.slotId !== slot.id);
       await appendEvent(order.id, "qc", `Cut from library · ${slot.label} · ${note}`, actor);
     } else {
       const note = result.checks
@@ -614,7 +659,23 @@ export async function reviewSlot(
     emptySlotMedia(slot);
     slot.qc = "fix";
     slot.qcNote = note?.trim() || slot.qcNote;
+    job.timeline = (job.timeline ?? []).filter((c) => c.slotId !== slotId);
     job.status = job.slots.every((s) => s.status === "done") ? "done" : "running";
+  } else if (slot.videoUrl) {
+    const exists = (job.timeline ?? []).some((c) => c.slotId === slotId);
+    if (!exists) {
+      job.timeline = [
+        ...(job.timeline ?? []),
+        {
+          id: makeId("tl"),
+          slotId,
+          label: slot.label,
+          url: slot.videoUrl,
+          stillUrl: slot.stillUrl,
+          seconds: slot.targetSeconds || slot.duration || 6,
+        },
+      ];
+    }
   }
   await saveGeneration(orderId, job);
   await appendEvent(
@@ -650,6 +711,7 @@ export async function regenSlot(
   await discardSlotAssets(orderId, slot, job);
   emptySlotMedia(slot);
   slot.qc = "fix";
+  job.timeline = (job.timeline ?? []).filter((c) => c.slotId !== slotId);
   job.status = "running";
   job.error = undefined;
   await saveGeneration(orderId, job);
@@ -671,11 +733,14 @@ export async function assembleMaster(orderId: string): Promise<{
   if (!job) throw new Error("No clips to assemble");
   const stitch = stitchIfReady(order, { ...job, masterUrl: undefined });
   if (!stitch) {
+    if (job.timeline && job.timeline.length === 0) {
+      throw new Error("Drag clips onto the FINAL CLIP timeline first.");
+    }
     const summary = clipQcSummary(order, job);
     throw new Error(
       summary.open.length
-        ? `Need ${summary.open.join(", ")} in the cut before the stitch.`
-        : "Need a video on hook, body, and end card first.",
+        ? `Need ${summary.open.join(", ")} in the cut, or drag takes onto the timeline.`
+        : "Drop videos onto the FINAL CLIP timeline first.",
     );
   }
   job.assembleRequested = true;
