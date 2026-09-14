@@ -41,6 +41,7 @@ export type GenSlotState = {
   qcNote?: string;
   autoQc?: AutoQcResult;
   assetIds?: string[];
+  remakes?: number;
 };
 
 export type TimelineClip = {
@@ -64,6 +65,7 @@ export type GenerationJob = {
   timeline?: TimelineClip[];
   direction?: string;
   cost?: CostTally;
+  floor?: { status: "watching" | "remaking" | "ready" | "needs_human"; note: string; remakes: number };
   slots: GenSlotState[];
 };
 
@@ -662,6 +664,11 @@ function emptySlotMedia(slot: GenSlotState) {
   slot.assetIds = [];
 }
 
+async function qcAndFloor(order: OrderRow, job: GenerationJob, slot: GenSlotState, actor = "grok") {
+  await applyAutoQc(order, job, slot, actor);
+  await applyFloorDecision(order, job, slot);
+}
+
 async function applyAutoQc(order: OrderRow, job: GenerationJob, slot: GenSlotState, actor = "grok") {
   if (slot.status !== "done") return;
   try {
@@ -700,6 +707,70 @@ async function applyAutoQc(order: OrderRow, job: GenerationJob, slot: GenSlotSta
   }
 }
 
+const MAX_FLOOR_REMAKES = 1;
+
+function floorDirection(order: OrderRow, slot: GenSlotState): string {
+  const fails = (slot.autoQc?.checks ?? []).filter((c) => !c.ok);
+  const bits = fails.map((c) => c.detail || c.label);
+  bits.push(pronunciationNote(order.city, order.state));
+  bits.push(
+    `On-screen name must read ${order.business_name}. City ${order.city}. Phone ${order.phone}. No watermarks, no extra logos, no morphing lettering.`,
+  );
+  return bits.filter(Boolean).join(" ").slice(0, 600);
+}
+
+/** Keep a passing take or queue one remake. Never start a second video in this tick. */
+export async function applyFloorDecision(order: OrderRow, job: GenerationJob, slot: GenSlotState): Promise<"kept" | "remake" | "human" | "skip"> {
+  if (slot.status !== "done" || !slot.autoQc) return "skip";
+  slot.remakes = slot.remakes ?? 0;
+  const hardFail = slot.autoQc.checks.some((c) => c.hard && !c.ok);
+  if (slot.autoQc.status === "pass" || (!hardFail && slot.autoQc.status !== "fail")) {
+    slot.qc = "pass";
+    if (slot.videoUrl && !(job.timeline ?? []).some((c) => c.slotId === slot.id)) {
+      job.timeline = [
+        ...(job.timeline ?? []),
+        {
+          id: makeId("tl"),
+          slotId: slot.id,
+          label: slot.label,
+          url: slot.videoUrl,
+          stillUrl: slot.stillUrl,
+          seconds: slot.targetSeconds || slot.duration || 15,
+        },
+      ];
+    }
+    job.floor = { status: "ready", note: "Floor kept this take. Watch the master, then Pass QC.", remakes: slot.remakes };
+    await appendEvent(order.id, "qc", `Floor kept · ${slot.label}.`, "floor");
+    return "kept";
+  }
+  if (hardFail && slot.remakes < MAX_FLOOR_REMAKES) {
+    const note = floorDirection(order, slot);
+    slot.remakes += 1;
+    job.direction = note;
+    slot.qcNote = note;
+    const add = ` DIRECTION CHANGE (this overrides the previous take): ${note}`;
+    if (slot.stillPrompt && !slot.stillPrompt.includes(note)) slot.stillPrompt += add;
+    if (slot.motionPrompt && !slot.motionPrompt.includes(note)) slot.motionPrompt += add;
+    await discardSlotAssets(order.id, slot, job);
+    emptySlotMedia(slot);
+    slot.qc = "fix";
+    slot.status = "queued";
+    job.timeline = (job.timeline ?? []).filter((c) => c.slotId !== slot.id);
+    job.status = "running";
+    job.floor = { status: "remaking", note, remakes: slot.remakes };
+    await appendEvent(
+      order.id,
+      "qc",
+      `Floor remake ${slot.remakes}/${MAX_FLOOR_REMAKES} · ${slot.label}.`,
+      "floor",
+    );
+    return "remake";
+  }
+  job.floor = { status: "needs_human", note: floorDirection(order, slot), remakes: slot.remakes };
+  await appendEvent(order.id, "qc", `Floor stopped · ${slot.label} still fails. Watch it.`, "floor");
+  return "human";
+}
+
 export async function runAutoQc(orderId: string): Promise<{ job: GenerationJob; order: OrderRow }> {
   const order = await getOrder(orderId);
   if (!order) throw new Error("Order not found");
@@ -707,7 +778,7 @@ export async function runAutoQc(orderId: string): Promise<{ job: GenerationJob; 
   if (!job) throw new Error("No clips to check");
   for (const slot of job.slots) {
     if (slot.status === "done" && (slot.videoUrl || slot.stillUrl)) {
-      await applyAutoQc(order, job, slot, "admin");
+      await qcAndFloor(order, job, slot, "admin");
     }
   }
   finishIfDone(job);
@@ -1108,7 +1179,7 @@ export async function completeImagineSlot(opts: {
     if (!slot.duration) {
       slot.status = "done";
       await appendEvent(opts.orderId, "generate", `Still ready · ${slot.label}.`, "grok");
-      await applyAutoQc(order, job, slot);
+      await qcAndFloor(order, job, slot);
     } else {
       slot.status = "still";
       await appendEvent(opts.orderId, "generate", `Still ready · ${slot.label}. Animating next.`, "grok");
@@ -1133,7 +1204,7 @@ export async function completeImagineSlot(opts: {
       slot.id === "mascot" ? "Mascot extra video ready." : `Clip ready · ${slot.label}.`,
       "grok",
     );
-    await applyAutoQc(order, job, slot);
+    await qcAndFloor(order, job, slot);
   }
 
   finishIfDone(job);
@@ -1282,12 +1353,12 @@ async function tickGenerationLocked(
       if (!slot.duration) {
         slot.status = "done";
         await appendEvent(orderId, "generate", `Still ready · ${slot.label}.`, "grok");
-        await applyAutoQc(order, job, slot);
+        await qcAndFloor(order, job, slot);
       }
     } else if (slot.status === "still" && slot.stillUrl) {
       if (!slot.duration) {
         slot.status = "done";
-        await applyAutoQc(order, job, slot);
+        await qcAndFloor(order, job, slot);
       } else {
         slot.status = "video";
         slot.claimedAt = new Date().toISOString();
@@ -1343,7 +1414,7 @@ async function tickGenerationLocked(
           const vidAst = await attachGen(orderId, `${slot.id}-gen.mp4`, last.url, "video/mp4", "delivery");
           trackAsset(slot, vidAst.id);
           await appendEvent(orderId, "generate", `Clip ready · ${slot.label}.`, "grok");
-          await applyAutoQc(order, job, slot);
+          await qcAndFloor(order, job, slot);
         } else if (last.status === "failed" || last.status === "expired") {
           throw new Error(`Video ${last.status} for ${slot.label}`);
         }
@@ -1361,9 +1432,22 @@ async function tickGenerationLocked(
 
   finishIfDone(job);
   if (job.status === "done") {
-    await appendEvent(orderId, "generate", "All slots generated. QC next.", "grok");
+    const floorNote = job.floor?.status === "ready" ? "Floor kept the take." : "QC next.";
+    await appendEvent(orderId, "generate", `All slots generated. ${floorNote}`, "grok");
   }
   await saveGeneration(orderId, job);
+  if (job.floor?.status === "ready" && !job.masterUrl && job.slots.some((s) => s.qc === "pass" && s.videoUrl)) {
+    try {
+      await assembleMaster(orderId, env("APP_ORIGIN") || "https://mya.geotargetus.dev");
+    } catch (err) {
+      await appendEvent(
+        orderId,
+        "generate",
+        `Floor assemble later: ${err instanceof Error ? err.message : "stitch failed"}`,
+        "floor",
+      );
+    }
+  }
   return { job, order: (await getOrder(orderId))! };
 }
 

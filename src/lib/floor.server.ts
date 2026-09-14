@@ -1,0 +1,117 @@
+import { inspectClip } from "./auto-qc.server";
+import { env } from "./env.server";
+import {
+  applyFloorDecision,
+  assembleMaster,
+  loadGeneration,
+  tickGeneration,
+  type GenerationJob,
+} from "./generate-ad.server";
+import { appendEvent, claimOrder, getOrder, listOrders } from "./orders.server";
+
+export const MAX_FLOOR_REMAKES = 1;
+
+export const GROK_BOT_PROFILE = {
+  name: "MYA Floor",
+  title: "20s ad production floor",
+  job: "Own 20-second MakeYourAd spots from generate through QC. Fix failed takes once. Leave delivery for a human.",
+  description: [
+    "You run the MakeYourAd production floor at https://mya.geotargetus.dev/admin.",
+    "Only 20-second spots. Never start a 12s or 40s job. Never click Generate while a job already says generating or animating.",
+    "Workflow for each paid 20s order: open the order → Generate if there is no clip → wait until the video is playable → watch the entire take with sound on.",
+    "Pass if: the person says the script, the city is spoken as a real place name (Heber City, Rohnert Park), the state is the full word (Utah, California — never U.T. or C.A.), the on-screen name/phone/city match the order, no watermarks or morphing logos.",
+    "Fail if any of that is wrong. Paste a short direction (what to fix) into Direction change and Apply direction. You get one remake. If the second take still fails, Flag needs attention with the reason and stop.",
+    "When a take passes: add it to the timeline if it is not already there, Master 20s if needed, check Watched / Names phone city correct / No artifacts, then Pass QC.",
+    "Never Send delivery email. Never refund. Never change the customer email. Never invent a second video while one is in flight.",
+    "If the site asks for the operator password, stop and wait for takeover. After you are signed in, keep that browser session.",
+  ].join(" "),
+  routine:
+    "Every 10 minutes, America/Phoenix, open https://mya.geotargetus.dev/admin. Work the oldest paid or in-production 20s order that is not delivered. Follow the MYA Floor profile. Post a one-line result in this chat: business, pass/remake/flag. Do not email the customer.",
+  firstMessage:
+    "You own the MakeYourAd 20s floor. Open https://mya.geotargetus.dev/admin, sign in if needed (I will take over for the password), then run the routine every 10 minutes. Generate, watch, one remake if QC fails, Pass QC when it is clean. Never send the delivery email.",
+};
+
+export function publicOrigin(): string {
+  return env("APP_ORIGIN")?.replace(/\/$/, "") || "https://mya.geotargetus.dev";
+}
+
+export type BotWork = {
+  orderId: string;
+  businessName: string;
+  product: string;
+  status: string;
+  jobStatus: string | null;
+  floor: GenerationJob["floor"] | null;
+  masterUrl: string | null;
+  slot: { id: string; label: string; status: string; qc: string | null; remakes: number } | null;
+  adminUrl: string;
+};
+
+export async function nextFloorWork(): Promise<BotWork | null> {
+  const orders = await listOrders();
+  const open = orders.filter(
+    (o) => o.product === "video-20" && (o.status === "paid" || o.status === "in_production" || o.status === "qc"),
+  );
+  for (const order of open) {
+    const job = await loadGeneration(order.id);
+    const slot = job?.slots[0] ?? null;
+    if (order.status === "delivered") continue;
+    return {
+      orderId: order.id,
+      businessName: order.business_name,
+      product: order.product,
+      status: order.status,
+      jobStatus: job?.status ?? null,
+      floor: job?.floor ?? null,
+      masterUrl: job?.masterUrl ?? slot?.videoUrl ?? null,
+      slot: slot
+        ? {
+            id: slot.id,
+            label: slot.label,
+            status: slot.status,
+            qc: slot.qc ?? null,
+            remakes: slot.remakes ?? 0,
+          }
+        : null,
+      adminUrl: `${publicOrigin()}/admin/${order.id}`,
+    };
+  }
+  return null;
+}
+
+export async function runBotTick(): Promise<{ work: BotWork | null; did: string }> {
+  const work = await nextFloorWork();
+  if (!work) return { work: null, did: "Queue empty." };
+  const order = await getOrder(work.orderId);
+  if (!order) return { work, did: "Order missing." };
+  if (order.status === "paid") {
+    await claimOrder(order.id, "floor");
+  }
+  const job = await loadGeneration(order.id);
+  if (!job) {
+    await tickGeneration(order.id, { action: "start" });
+    return { work, did: `Started generate for ${order.business_name}.` };
+  }
+  if (job.status === "running" || job.slots.some((s) => s.status === "queued" || s.status === "still" || s.status === "video")) {
+    await tickGeneration(order.id, { action: "tick" });
+    return { work, did: `Ticked ${order.business_name}.` };
+  }
+  const slot = job.slots[0];
+  if (slot && slot.status === "done" && slot.qc !== "pass") {
+    if (!slot.autoQc) {
+      slot.autoQc = await inspectClip({ slot, order });
+    }
+    await applyFloorDecision(order, job, slot);
+    return { work, did: `QC ${order.business_name} · ${slot.autoQc?.status ?? "unknown"}.` };
+  }
+  if (slot?.qc === "pass" && !job.masterUrl) {
+    try {
+      await assembleMaster(order.id, publicOrigin());
+      await appendEvent(order.id, "generate", "Floor assembled the 20s master. Human Pass QC next.", "floor");
+      return { work, did: `Assembled ${order.business_name}.` };
+    } catch (err) {
+      return { work, did: `Assemble failed: ${err instanceof Error ? err.message : "stitch"}` };
+    }
+  }
+  return { work, did: `${order.business_name} is waiting for you to watch the master.` };
+}

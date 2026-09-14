@@ -204,7 +204,21 @@ function Detail({
               </p>
             );
           })()}
-          {order.product !== "video-20" ? (
+          {generation?.floor ? (
+            <p
+              className={`mt-3 rounded-md px-4 py-3 text-sm ${
+                generation.floor.status === "needs_human"
+                  ? "bg-warn text-fg"
+                  : generation.floor.status === "ready"
+                    ? "bg-elevated text-fg"
+                    : "bg-elevated text-muted"
+              }`}
+            >
+              Floor · {generation.floor.status.replaceAll("_", " ")}
+              {generation.floor.remakes ? ` · remake ${generation.floor.remakes}` : ""}
+              {generation.floor.note ? ` · ${generation.floor.note}` : ""}
+            </p>
+          ) : null}
             <p className="mt-2 text-sm text-warn">
               20s spots only right now. Generate is off on 12s and 40s jobs so they cannot hang the API.
             </p>

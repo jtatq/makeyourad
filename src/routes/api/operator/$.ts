@@ -23,6 +23,7 @@ import {
   tickGeneration,
 } from "@/lib/generate-ad.server";
 import { requestIsImagineWorker, requestIsOperator, requestOrigin, unauthorizedJson } from "@/lib/operator-auth.server";
+import { GROK_BOT_PROFILE, nextFloorWork, runBotTick } from "@/lib/floor.server";
 
 export const Route = createFileRoute("/api/operator/$")({
   server: {
@@ -74,6 +75,21 @@ async function handle(request: Request, splat: string, method: "GET" | "POST") {
           origin: requestOrigin(request),
         });
         return Response.json(result);
+      }
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }
+    if (parts[0] === "bot") {
+      if (method === "GET" && (parts[1] === "playbook" || !parts[1])) {
+        return Response.json({
+          profile: GROK_BOT_PROFILE,
+          work: await nextFloorWork(),
+        });
+      }
+      if (method === "GET" && parts[1] === "next") {
+        return Response.json({ work: await nextFloorWork() });
+      }
+      if (method === "POST" && parts[1] === "tick") {
+        return Response.json(await runBotTick());
       }
       return Response.json({ error: "Not found" }, { status: 404 });
     }

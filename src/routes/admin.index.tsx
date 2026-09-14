@@ -42,6 +42,9 @@ function QueuePage() {
             >
               Send SLA email
             </Button>
+            <Link to="/admin/bot" className="text-sm text-muted hover:underline">
+              Grok Bot
+            </Link>
             <Button
               size="sm"
               variant="ghost"
