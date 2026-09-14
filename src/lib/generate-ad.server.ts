@@ -18,7 +18,8 @@ import { spokenPlace } from "./intake";
 import { extractProductScript, slotScriptLine } from "./script";
 import { PRODUCTS, type Tone } from "./products";
 import { stitchMasterFile } from "./stitch.server";
-import { classifyXaiPath, readLimitHeaders, recordXaiCall } from "./xai-limits.server";
+import { classifyXaiPath, readLimitHeaders, recordXaiCall, runWithOrder } from "./xai-limits.server";
+import { addImage, addVideo, emptyCost, estimateJobCost, type CostTally } from "./xai-cost";
 
 export type GenEngine = "imagine" | "xai";
 export type GenSlotStatus = "queued" | "still" | "video" | "done" | "error";
@@ -62,6 +63,7 @@ export type GenerationJob = {
   assembleRequested?: boolean;
   timeline?: TimelineClip[];
   direction?: string;
+  cost?: CostTally;
   slots: GenSlotState[];
 };
 
@@ -915,6 +917,7 @@ function initJob(packet: GenerationPacket, engine: GenEngine, direction?: string
         motionPrompt: motion,
       };
     }),
+    cost: emptyCost(),
   };
 }
 
@@ -1148,7 +1151,7 @@ export async function tickGeneration(
   orderId: string,
   opts: { action: "start" | "tick"; force?: boolean; direction?: string },
 ): Promise<{ job: GenerationJob; order: OrderRow }> {
-  const run = () => tickGenerationLocked(orderId, opts);
+  const run = () => runWithOrder(orderId, () => tickGenerationLocked(orderId, opts));
   const prev = tickLocks.get(orderId) ?? Promise.resolve();
   const next = prev.then(run, run);
   tickLocks.set(
@@ -1273,6 +1276,7 @@ async function tickGenerationLocked(
       const ref = await referenceUri(orderId, slot.id === "end_card" || slot.id === "static");
       const url = await generateStill(slot.stillPrompt || stillPrompt(packet, recipeSlot, ratio), ref);
       slot.stillUrl = url;
+      job.cost = addImage(job.cost ?? emptyCost(), Boolean(ref));
       const stillAst = await attachGen(orderId, `${slot.id}-gen.jpg`, url, "image/jpeg", slot.duration ? "still" : "delivery");
       trackAsset(slot, stillAst.id);
       if (!slot.duration) {
@@ -1302,6 +1306,7 @@ async function tickGenerationLocked(
           slot.duration,
         );
         slot.videoRequestId = vidId;
+        job.cost = addVideo(job.cost ?? emptyCost(), slot.duration ?? 15);
         await appendEvent(orderId, "generate", `Animating ${slot.label} (${slot.duration}s API take).`, "grok");
       }
     } else if (slot.status === "video") {
@@ -1328,6 +1333,7 @@ async function tickGenerationLocked(
           slot.stillUrl,
           slot.duration ?? 6,
         );
+        job.cost = addVideo(job.cost ?? emptyCost(), slot.duration ?? 15);
       } else {
         const last = await pollVideo(slot.videoRequestId);
         const done = last.status === "done" || last.status === "completed" || last.status === "succeeded";

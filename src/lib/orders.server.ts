@@ -8,6 +8,7 @@ import {
 import { safeFilename, safeMime } from "./filename";
 import { makeId } from "./ids";
 import { asIso, asNumber, parseJsonArray, parseJsonObject } from "./json";
+import { estimateJobCost } from "./xai-cost";
 import {
   requestOrigin,
   signedFileUrl,
@@ -56,6 +57,7 @@ export type OrderRow = {
   featured_at: string | null;
   created_at: string;
   updated_at: string;
+  gen_cost_cents: number;
 };
 
 export type EventRow = {
@@ -94,6 +96,7 @@ export type OrderSql = {
   featured_at: string | Date | null;
   created_at: string | Date;
   updated_at: string | Date;
+  generation?: unknown;
 };
 
 export type CheckoutInput = {
@@ -113,6 +116,19 @@ export type CheckoutInput = {
   assets: Array<{ filename: string; mime: string; dataUrl: string; kind?: "upload" | "logo" }>;
   websiteProfile?: WebsiteFacts;
 };
+
+function parseGeneration(raw: unknown): { cost?: { totalCents: number }; slots?: Array<{ stillUrl?: string; videoUrl?: string; videoRequestId?: string; duration?: number | null }> } {
+  if (!raw) return {};
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw) as ReturnType<typeof parseGeneration>;
+    } catch {
+      return {};
+    }
+  }
+  if (typeof raw === "object") return raw as ReturnType<typeof parseGeneration>;
+  return {};
+}
 
 export function mapOrder(row: OrderSql): OrderRow {
   return {
@@ -142,6 +158,7 @@ export function mapOrder(row: OrderSql): OrderRow {
     featured_at: asIso(row.featured_at),
     created_at: asIso(row.created_at) ?? new Date().toISOString(),
     updated_at: asIso(row.updated_at) ?? new Date().toISOString(),
+    gen_cost_cents: estimateJobCost(parseGeneration(row.generation)).totalCents,
   };
 }
 

@@ -25,7 +25,8 @@ import {
   adminSlotQc,
 } from "@/lib/admin.functions";
 import { PRODUCTS } from "@/lib/products";
-import { formatUsd } from "@/lib/utils";
+import { estimateJobCost } from "@/lib/xai-cost";
+import { formatUsd, formatUsdExact } from "@/lib/utils";
 
 export const Route = createFileRoute("/admin/$orderId")({
   loader: async ({ params }) => {
@@ -187,6 +188,22 @@ function Detail({
             {order.add_ons.includes("mascot") ? " + mascot" : ""} · {formatUsd(order.price_cents)} · {order.city},{" "}
             {order.state}
           </p>
+          {(() => {
+            const cost = generation ? estimateJobCost(generation) : { stills: 0, videos: 0, totalCents: order.gen_cost_cents, imageCents: 0, videoCents: 0 };
+            if (cost.totalCents <= 0) return null;
+            return (
+              <p className="mt-2 text-sm text-muted">
+                Generate cost {formatUsdExact(cost.totalCents)}
+                {cost.stills || cost.videos
+                  ? ` · ${cost.stills} still${cost.stills === 1 ? "" : "s"} · ${cost.videos} video${cost.videos === 1 ? "" : "s"}`
+                  : ""}
+                {" "}
+                <span className="text-xs">
+                  (2K still $0.08 · 15s 1080p $3.75 + $0.01 image in)
+                </span>
+              </p>
+            );
+          })()}
           {order.product !== "video-20" ? (
             <p className="mt-2 text-sm text-warn">
               20s spots only right now. Generate is off on 12s and 40s jobs so they cannot hang the API.

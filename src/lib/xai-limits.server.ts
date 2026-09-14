@@ -1,5 +1,7 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { getSql } from "./db";
 import { makeId } from "./ids";
+import { callCostCents } from "./xai-cost";
 
 export type ApiCallKind = "image" | "video" | "poll" | "other";
 
@@ -15,14 +17,16 @@ export type ApiCallRow = {
   limit: string | null;
   reset: string | null;
   error: string | null;
+  orderId: string | null;
+  costCents: number;
 };
 
 export type ApiLimitSnapshot = {
   capturedAt: string;
   videoRpsCap: number;
   imageRpsCap: number;
-  lastHour: { image: number; video: number; poll: number; limited: number };
-  lastDay: { image: number; video: number; poll: number; limited: number };
+  lastHour: { image: number; video: number; poll: number; limited: number; costCents: number };
+  lastDay: { image: number; video: number; poll: number; limited: number; costCents: number };
   last429At: string | null;
   last429Path: string | null;
   lastRemaining: string | null;
@@ -42,7 +46,19 @@ type Pending = {
   limit: string | null;
   reset: string | null;
   error: string | null;
+  orderId: string | null;
+  costCents: number;
 };
+
+const orderCtx = new AsyncLocalStorage<string>();
+
+export function runWithOrder<T>(orderId: string, fn: () => Promise<T>): Promise<T> {
+  return orderCtx.run(orderId, fn);
+}
+
+export function currentOrderId(): string | null {
+  return orderCtx.getStore() ?? null;
+}
 
 const recentMem: ApiCallRow[] = [];
 const pending: Pending[] = [];
@@ -101,23 +117,27 @@ export function readLimitHeaders(res: Response): {
   };
 }
 
-export function recordXaiCall(opts: Pending) {
-  const row: ApiCallRow = {
+export function recordXaiCall(opts: Omit<Pending, "orderId" | "costCents"> & { orderId?: string | null }) {
+  const orderId = opts.orderId ?? currentOrderId();
+  const costCents = callCostCents(opts.kind, opts.path, opts.method, opts.status);
+  const row: Pending = { ...opts, orderId, costCents };
+  recentMem.unshift({
     at: new Date().toISOString(),
-    kind: opts.kind,
-    path: opts.path,
-    method: opts.method,
-    status: opts.status,
-    ms: opts.ms,
-    retryAfter: opts.retryAfter,
-    remaining: opts.remaining,
-    limit: opts.limit,
-    reset: opts.reset,
-    error: opts.error,
-  };
-  recentMem.unshift(row);
+    kind: row.kind,
+    path: row.path,
+    method: row.method,
+    status: row.status,
+    ms: row.ms,
+    retryAfter: row.retryAfter,
+    remaining: row.remaining,
+    limit: row.limit,
+    reset: row.reset,
+    error: row.error,
+    orderId,
+    costCents,
+  });
   if (recentMem.length > 40) recentMem.pop();
-  pending.push(opts);
+  pending.push(row);
   void flushPending();
 }
 
@@ -138,9 +158,13 @@ async function ensureTable() {
           remaining text,
           limit_hdr text,
           reset_hdr text,
-          error text
+          error text,
+          order_id text,
+          cost_cents int not null default 0
         )
       `);
+      await sql.query(`alter table api_calls add column if not exists order_id text`);
+      await sql.query(`alter table api_calls add column if not exists cost_cents int not null default 0`);
     })().catch((err) => {
       tableReady = null;
       throw err;
@@ -159,8 +183,8 @@ async function flushPending() {
       const batch = pending.splice(0, 20);
       for (const c of batch) {
         await sql.query(
-          `insert into api_calls (id, kind, path, method, status, ms, retry_after, remaining, limit_hdr, reset_hdr, error)
-           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          `insert into api_calls (id, kind, path, method, status, ms, retry_after, remaining, limit_hdr, reset_hdr, error, order_id, cost_cents)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
           [
             makeId("api"),
             c.kind,
@@ -173,6 +197,8 @@ async function flushPending() {
             c.limit,
             c.reset,
             c.error?.slice(0, 280) ?? null,
+            c.orderId,
+            c.costCents,
           ],
         );
       }
@@ -198,6 +224,7 @@ export async function apiLimitSnapshot(): Promise<ApiLimitSnapshot> {
     video: 0,
     poll: 0,
     limited: 0,
+    costCents: 0,
   };
   const snap: ApiLimitSnapshot = {
     capturedAt: new Date().toISOString(),
@@ -215,11 +242,11 @@ export async function apiLimitSnapshot(): Promise<ApiLimitSnapshot> {
   try {
     await ensureTable();
     const sql = await getSql();
-    const hour = await sql.query<{ kind: string; status: number }>(
-      `select kind, status from api_calls where created_at > now() - interval '1 hour'`,
+    const hour = await sql.query<{ kind: string; status: number; cost_cents: number | null }>(
+      `select kind, status, cost_cents from api_calls where created_at > now() - interval '1 hour'`,
     );
-    const day = await sql.query<{ kind: string; status: number }>(
-      `select kind, status from api_calls where created_at > now() - interval '24 hours'`,
+    const day = await sql.query<{ kind: string; status: number; cost_cents: number | null }>(
+      `select kind, status, cost_cents from api_calls where created_at > now() - interval '24 hours'`,
     );
     const last429 = await sql.query<{ created_at: string; path: string }>(
       `select created_at::text as created_at, path from api_calls where status = 429 order by created_at desc limit 1`,
@@ -245,7 +272,7 @@ export async function apiLimitSnapshot(): Promise<ApiLimitSnapshot> {
       `select created_at::text as created_at, kind, path, method, status, ms, retry_after, remaining, limit_hdr, reset_hdr, error
        from api_calls order by created_at desc limit 12`,
     );
-    const roll = (rows: Array<{ kind: string; status: number }>) => {
+    const roll = (rows: Array<{ kind: string; status: number; cost_cents?: number | null }>) => {
       const img = countWindow(rows, "image");
       const vid = countWindow(rows, "video");
       const poll = countWindow(rows, "poll");
@@ -254,6 +281,7 @@ export async function apiLimitSnapshot(): Promise<ApiLimitSnapshot> {
         video: vid.n,
         poll: poll.n,
         limited: rows.filter((r) => r.status === 429).length,
+        costCents: rows.reduce((n, r) => n + (Number(r.cost_cents) || 0), 0),
       };
     };
     snap.lastHour = roll(hour);
@@ -280,10 +308,26 @@ export async function apiLimitSnapshot(): Promise<ApiLimitSnapshot> {
         limit: r.limit_hdr,
         reset: r.reset_hdr,
         error: r.error,
+        orderId: null,
+        costCents: 0,
       }));
     }
   } catch {
     /* in-memory fallback already on snap.recent */
   }
   return snap;
+}
+
+export async function orderApiCostCents(orderId: string): Promise<number> {
+  try {
+    await ensureTable();
+    const sql = await getSql();
+    const rows = await sql.query<{ sum: number | string | null }>(
+      `select coalesce(sum(cost_cents),0) as sum from api_calls where order_id = $1`,
+      [orderId],
+    );
+    return Number(rows[0]?.sum ?? 0);
+  } catch {
+    return 0;
+  }
 }

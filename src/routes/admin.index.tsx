@@ -6,7 +6,7 @@ import { Mark } from "@/components/layout/site-chrome";
 import { Button } from "@/components/ui/button";
 import { adminCreateFromProfile, adminDashboard, adminLogout, adminSendSla } from "@/lib/admin.functions";
 import { PRODUCTS, type OrderStatus } from "@/lib/products";
-import { formatUsd } from "@/lib/utils";
+import { formatUsd, formatUsdExact } from "@/lib/utils";
 
 export const Route = createFileRoute("/admin/")({
   loader: async () => adminDashboard(),
@@ -100,12 +100,19 @@ function QueuePage() {
               Last hour · {dashboard.apiLimits.lastHour.video} video
               {dashboard.apiLimits.lastHour.video === 1 ? "" : "s"} · {dashboard.apiLimits.lastHour.image}{" "}
               still{dashboard.apiLimits.lastHour.image === 1 ? "" : "s"}
+              {dashboard.apiLimits.lastHour.costCents
+                ? ` · ${formatUsdExact(dashboard.apiLimits.lastHour.costCents)}`
+                : ""}
               {dashboard.apiLimits.lastHour.limited
                 ? ` · ${dashboard.apiLimits.lastHour.limited} hit 429`
                 : " · no 429s"}
               . Today · {dashboard.apiLimits.lastDay.video} video
               {dashboard.apiLimits.lastDay.video === 1 ? "" : "s"} · {dashboard.apiLimits.lastDay.image} still
-              {dashboard.apiLimits.lastDay.image === 1 ? "" : "s"}.
+              {dashboard.apiLimits.lastDay.image === 1 ? "" : "s"}
+              {dashboard.apiLimits.lastDay.costCents
+                ? ` · ${formatUsdExact(dashboard.apiLimits.lastDay.costCents)}`
+                : ""}
+              .
             </p>
             <p className="mt-1">
               Published caps (Tier 0): video {dashboard.apiLimits.videoRpsCap}/sec · image{" "}
@@ -187,12 +194,13 @@ function QueuePage() {
                 <th className="px-4 py-3 font-medium">Product</th>
                 <th className="px-4 py-3 font-medium">Status</th>
                 <th className="px-4 py-3 font-medium">Price</th>
+                <th className="px-4 py-3 font-medium">Gen cost</th>
               </tr>
             </thead>
             <tbody>
               {orders.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-10 text-center text-muted">
+                  <td colSpan={6} className="px-4 py-10 text-center text-muted">
                     No orders in this filter.
                   </td>
                 </tr>
@@ -231,6 +239,9 @@ function QueuePage() {
                         <StatusPill status={o.status} />
                       </td>
                       <td className="px-4 py-3 tabular-nums">{formatUsd(o.price_cents)}</td>
+                      <td className="px-4 py-3 tabular-nums text-muted">
+                        {o.gen_cost_cents > 0 ? formatUsdExact(o.gen_cost_cents) : "—"}
+                      </td>
                     </tr>
                   );
                 })
