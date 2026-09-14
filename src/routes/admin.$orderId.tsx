@@ -453,14 +453,14 @@ function Detail({
             {generation && takes.length > 0 && !timelineReady && !allClipsPassed ? (
               <p className="mt-4 text-sm text-warn">Drag the takes you want onto FINAL CLIP, in play order.</p>
             ) : null}
-            {generation && (timelineReady || allClipsPassed) ? (
+            {generation && takes.length > 0 ? (
               <div className="mt-4">
                 <Button
                   className="w-full"
                   disabled={busy !== null}
                   onClick={() => void run("assemble", () => adminAssemble({ data: { id: order.id } }))}
                 >
-                  Stitch the FINAL CLIP
+                  {busy === "assemble" ? "Stitching…" : "Stitch the FINAL CLIP"}
                 </Button>
               </div>
             ) : null}

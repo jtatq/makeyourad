@@ -15,6 +15,7 @@ import { TONE_PACKS } from "./prompts/tones";
 import { masterClips, type SlotId } from "./recipe";
 import { inspectClip, pronunciationNote, type AutoQcResult } from "./auto-qc.server";
 import { PRODUCTS, type Tone } from "./products";
+import { stitchMasterFile } from "./stitch.server";
 
 export type GenEngine = "imagine" | "xai";
 export type GenSlotStatus = "queued" | "still" | "video" | "done" | "error";
@@ -439,29 +440,22 @@ function jobAspect(order: OrderRow): StitchRequest["aspectRatio"] {
 export function stitchIfReady(order: OrderRow, job: GenerationJob): StitchRequest | null {
   if (order.product === "static") return null;
   if (job.masterUrl) return null;
+  const ready: StitchRequest["clips"] = [];
   if (job.timeline) {
     if (job.timeline.length === 0) return null;
-    const ready = job.timeline.filter((c) => c.url);
-    if (ready.length === 0) return null;
-    const durationSeconds =
-      PRODUCTS[order.product].durationSeconds ?? ready.reduce((n, c) => n + c.seconds, 0);
-    return {
-      filename: `${businessSlug(order.business_name)}-${durationSeconds}s.mp4`,
-      durationSeconds,
-      aspectRatio: jobAspect(order),
-      clips: ready.map((c) => ({ slotId: c.slotId, seconds: c.seconds, url: c.url })),
-    };
+    for (const c of job.timeline) {
+      if (!c.url) continue;
+      ready.push({ slotId: c.slotId, seconds: c.seconds, url: c.url });
+    }
+  } else {
+    for (const c of masterClips(order.product)) {
+      const slot = job.slots.find((s) => s.id === c.id);
+      if (!slot?.videoUrl) continue;
+      ready.push({ slotId: c.id, seconds: slot.targetSeconds || c.seconds, url: slot.videoUrl });
+    }
   }
-  const clips = masterClips(order.product);
-  if (clips.length === 0) return null;
-  const ready: StitchRequest["clips"] = [];
-  for (const c of clips) {
-    const slot = job.slots.find((s) => s.id === c.id);
-    if (!slot || slot.status !== "done" || !slot.videoUrl) return null;
-    if (slot.qc !== "pass") return null;
-    ready.push({ slotId: c.id, seconds: slot.targetSeconds || c.seconds, url: slot.videoUrl });
-  }
-  const durationSeconds = PRODUCTS[order.product].durationSeconds ?? clips.reduce((n, c) => n + c.seconds, 0);
+  if (ready.length === 0) return null;
+  const durationSeconds = PRODUCTS[order.product].durationSeconds ?? ready.reduce((n, c) => n + c.seconds, 0);
   return {
     filename: `${businessSlug(order.business_name)}-${durationSeconds}s.mp4`,
     durationSeconds,
@@ -722,7 +716,10 @@ export async function regenSlot(
   return { job, order: (await getOrder(orderId))! };
 }
 
-export async function assembleMaster(orderId: string): Promise<{
+export async function assembleMaster(
+  orderId: string,
+  origin: string,
+): Promise<{
   job: GenerationJob;
   order: OrderRow;
   stitch: StitchRequest;
@@ -736,23 +733,47 @@ export async function assembleMaster(orderId: string): Promise<{
     if (job.timeline && job.timeline.length === 0) {
       throw new Error("Drag clips onto the FINAL CLIP timeline first.");
     }
-    const summary = clipQcSummary(order, job);
-    throw new Error(
-      summary.open.length
-        ? `Need ${summary.open.join(", ")} in the cut, or drag takes onto the timeline.`
-        : "Drop videos onto the FINAL CLIP timeline first.",
-    );
+    throw new Error("Need videos on the timeline (or generated hook / body / end card) to stitch.");
   }
   job.assembleRequested = true;
   job.masterUrl = undefined;
+  job.error = undefined;
   await saveGeneration(orderId, job);
   await appendEvent(
     orderId,
     "generate",
-    `Assemble master · ${stitch.durationSeconds}s after clip QC.`,
+    `Stitching FINAL CLIP · ${stitch.clips.map((c) => c.slotId).join(" → ")} · ${stitch.durationSeconds}s.`,
     "admin",
   );
-  return { job, order, stitch };
+
+  try {
+    let buf = await stitchMasterFile({
+      clips: stitch.clips,
+      aspect: stitch.aspectRatio,
+      crf: stitch.durationSeconds >= 40 ? 32 : 28,
+    });
+    if (buf.length > 4_500_000) {
+      buf = await stitchMasterFile({
+        clips: stitch.clips,
+        aspect: stitch.aspectRatio,
+        crf: 36,
+      });
+    }
+    const dataUrl = `data:video/mp4;base64,${buf.toString("base64")}`;
+    const attached = await attachGen(orderId, stitch.filename, null, "video/mp4", "delivery", dataUrl);
+    job.masterUrl = assetViewUrl(origin, attached.id, dataUrl);
+    job.assembleRequested = false;
+    await saveGeneration(orderId, job);
+    await appendEvent(orderId, "generate", `Master stitched · ${stitch.durationSeconds}s.`, "admin");
+    return { job, order: (await getOrder(orderId))!, stitch };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Stitch failed";
+    job.assembleRequested = false;
+    job.error = message.slice(0, 280);
+    await saveGeneration(orderId, job);
+    await appendEvent(orderId, "generate", `Stitch failed · ${job.error}`, "admin");
+    throw new Error(job.error);
+  }
 }
 
 async function clearGenFiles(orderId: string) {

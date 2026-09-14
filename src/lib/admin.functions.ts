@@ -178,7 +178,8 @@ export const adminAssemble = createServerFn({ method: "POST" })
   .validator(z.object({ id: z.string() }))
   .handler(async ({ data }) => {
     requireAdmin();
-    return assembleMaster(data.id);
+    const origin = requestOrigin(getRequest());
+    return assembleMaster(data.id, origin);
   });
 
 export const adminSaveTimeline = createServerFn({ method: "POST" })
