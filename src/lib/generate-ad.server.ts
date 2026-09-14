@@ -35,6 +35,7 @@ export type GenSlotState = {
   qc?: "pass" | "fix";
   qcNote?: string;
   autoQc?: AutoQcResult;
+  assetIds?: string[];
 };
 
 export type GenerationJob = {
@@ -465,20 +466,49 @@ export function clipQcSummary(order: OrderRow, job: GenerationJob) {
   };
 }
 
-async function discardSlotAssets(orderId: string, slotId: SlotId) {
+async function discardSlotAssets(orderId: string, slot: GenSlotState, job?: GenerationJob) {
   const sql = await getSql();
+  const ids = slot.assetIds ?? [];
+  const cutMaster = slot.id !== "mascot" && slot.id !== "static";
+  if (ids.length > 0) {
+    await sql.query(`delete from order_assets where order_id = $1 and id = any($2::text[])`, [orderId, ids]);
+  }
   await sql.query(
     `delete from order_assets
       where order_id = $1
         and kind in ('still','delivery')
         and (
-          filename like $2
-          or filename like $3
-          or ($4 = true and (filename like '%-20s.mp4' or filename like '%-40s.mp4'))
-          or ($5 = true and filename like '%-mascot.mp4')
+          filename ilike $2
+          or filename ilike $3
+          or filename ilike $4
+          or ($5::text is not null and (coalesce(external_url,'') = $5 or coalesce(data_url,'') = $5))
+          or ($6::text is not null and (coalesce(external_url,'') = $6 or coalesce(data_url,'') = $6))
+          or ($7 = true and (filename like '%-20s.mp4' or filename like '%-40s.mp4' or filename ilike '%master%'))
+          or ($8 = true and filename like '%-mascot.mp4')
         )`,
-    [orderId, `${slotId}-gen.%`, `${slotId}-gen-%`, slotId !== "mascot" && slotId !== "static", slotId === "mascot"],
+    [
+      orderId,
+      `${slot.id}-gen.%`,
+      `${slot.id}-gen-%`,
+      `%${slot.id}-gen%`,
+      slot.stillUrl ?? null,
+      slot.videoUrl ?? null,
+      cutMaster,
+      slot.id === "mascot",
+    ],
   );
+  slot.assetIds = [];
+  if (job && cutMaster) {
+    job.masterUrl = undefined;
+    job.assembleRequested = false;
+  }
+  if (job && slot.id === "mascot") job.mascotUrl = undefined;
+}
+
+function trackAsset(slot: GenSlotState, id: string) {
+  const ids = new Set(slot.assetIds ?? []);
+  ids.add(id);
+  slot.assetIds = [...ids];
 }
 
 function emptySlotMedia(slot: GenSlotState) {
@@ -489,6 +519,7 @@ function emptySlotMedia(slot: GenSlotState) {
   slot.error = undefined;
   slot.status = "queued";
   slot.autoQc = undefined;
+  slot.assetIds = [];
 }
 
 async function applyAutoQc(order: OrderRow, job: GenerationJob, slot: GenSlotState, actor = "grok") {
@@ -497,23 +528,18 @@ async function applyAutoQc(order: OrderRow, job: GenerationJob, slot: GenSlotSta
     const result = await inspectClip({ slot, order });
     slot.autoQc = result;
     if (result.status === "pass") {
-      slot.qc = "pass";
-      await appendEvent(order.id, "qc", `Auto QC passed · ${slot.label}.`, actor);
+      await appendEvent(order.id, "qc", `Auto QC recommends keep · ${slot.label}.`, actor);
     } else if (result.status === "fail") {
       const note = result.checks
         .filter((c) => !c.ok)
         .map((c) => c.detail)
         .join(" ")
         .slice(0, 280);
-      slot.qc = "fix";
-      slot.qcNote = note;
-      await discardSlotAssets(order.id, slot.id);
+      await discardSlotAssets(order.id, slot, job);
       emptySlotMedia(slot);
       slot.qc = "fix";
       slot.qcNote = note;
-      job.masterUrl = undefined;
-      job.assembleRequested = false;
-      await appendEvent(order.id, "qc", `Auto QC failed · discarded ${slot.label} · ${note}`, actor);
+      await appendEvent(order.id, "qc", `Cut from library · ${slot.label} · ${note}`, actor);
     } else {
       const note = result.checks
         .filter((c) => !c.ok)
@@ -584,11 +610,10 @@ export async function reviewSlot(
   slot.qc = verdict;
   slot.qcNote = note?.trim() || slot.qcNote;
   if (verdict === "fix") {
-    await discardSlotAssets(orderId, slotId);
+    await discardSlotAssets(orderId, slot, job);
     emptySlotMedia(slot);
-    job.masterUrl = undefined;
-    job.assembleRequested = false;
-    if (slotId === "mascot") job.mascotUrl = undefined;
+    slot.qc = "fix";
+    slot.qcNote = note?.trim() || slot.qcNote;
     job.status = job.slots.every((s) => s.status === "done") ? "done" : "running";
   }
   await saveGeneration(orderId, job);
@@ -596,8 +621,8 @@ export async function reviewSlot(
     orderId,
     "qc",
     verdict === "pass"
-      ? `Passed QC · ${slot.label}.`
-      : `Discarded failed clip · ${slot.label}${slot.qcNote ? ` · ${slot.qcNote}` : ""}.`,
+      ? `Made the cut · ${slot.label}.`
+      : `Cut from library · ${slot.label}${slot.qcNote ? ` · ${slot.qcNote}` : ""}.`,
     "admin",
   );
   return { job, order, stitch: stitchIfReady(order, job) };
@@ -622,14 +647,11 @@ export async function regenSlot(
     if (slot.motionPrompt && !slot.motionPrompt.includes(extra)) slot.motionPrompt += add;
   }
   slot.status = "queued";
+  await discardSlotAssets(orderId, slot, job);
   emptySlotMedia(slot);
   slot.qc = "fix";
   job.status = "running";
   job.error = undefined;
-  job.masterUrl = undefined;
-  job.assembleRequested = false;
-  if (slotId === "mascot") job.mascotUrl = undefined;
-  await discardSlotAssets(orderId, slotId);
   await saveGeneration(orderId, job);
   await appendEvent(orderId, "generate", `Redo · ${slot.label}${extra ? ` · ${extra}` : ""}.`, "admin");
   if (generationEngine() === "xai") {
@@ -652,7 +674,7 @@ export async function assembleMaster(orderId: string): Promise<{
     const summary = clipQcSummary(order, job);
     throw new Error(
       summary.open.length
-        ? `Pass QC on ${summary.open.join(", ")} before assembling.`
+        ? `Need ${summary.open.join(", ")} in the cut before the stitch.`
         : "Need a video on hook, body, and end card first.",
     );
   }
@@ -887,6 +909,7 @@ export async function completeImagineSlot(opts: {
       opts.dataUrl,
     );
     slot.stillUrl = assetViewUrl(opts.origin, attached.id, opts.dataUrl);
+    trackAsset(slot, attached.id);
     slot.claimedAt = undefined;
     slot.error = undefined;
     if (!slot.duration) {
@@ -906,6 +929,7 @@ export async function completeImagineSlot(opts: {
           : `${slot.id}-gen.mp4`;
     const attached = await attachGen(opts.orderId, outName, opts.url ?? null, mime, "delivery", opts.dataUrl);
     slot.videoUrl = assetViewUrl(opts.origin, attached.id, opts.dataUrl);
+    trackAsset(slot, attached.id);
     slot.status = "done";
     slot.claimedAt = undefined;
     slot.error = undefined;
@@ -1007,7 +1031,8 @@ export async function tickGeneration(
       const ref = await referenceUri(orderId, slot.id === "end_card" || slot.id === "static");
       const url = await generateStill(stillPrompt(packet, recipeSlot, ratio), ref);
       slot.stillUrl = url;
-      await attachGen(orderId, `${slot.id}-gen.jpg`, url, "image/jpeg", slot.duration ? "still" : "delivery");
+      const stillAst = await attachGen(orderId, `${slot.id}-gen.jpg`, url, "image/jpeg", slot.duration ? "still" : "delivery");
+      trackAsset(slot, stillAst.id);
       if (!slot.duration) {
         slot.status = "done";
         await appendEvent(orderId, "generate", `Still ready · ${slot.label}.`, "grok");
@@ -1041,7 +1066,8 @@ export async function tickGeneration(
         if (done && last.url) {
           slot.videoUrl = last.url;
           slot.status = "done";
-          await attachGen(orderId, `${slot.id}-gen.mp4`, last.url, "video/mp4", "delivery");
+          const vidAst = await attachGen(orderId, `${slot.id}-gen.mp4`, last.url, "video/mp4", "delivery");
+          trackAsset(slot, vidAst.id);
           await appendEvent(orderId, "generate", `Clip ready · ${slot.label}.`, "grok");
           await applyAutoQc(order, job, slot);
         } else if (last.status === "failed" || last.status === "expired") {

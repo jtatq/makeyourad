@@ -108,7 +108,9 @@ function Detail({
   }, [generation?.status, generation?.engine, engine, order.id]);
 
   const uploads = assets.filter((a) => a.kind === "upload" || a.kind === "logo");
-  const deliveries = assets.filter((a) => a.kind === "delivery");
+  const deliveries = assets.filter(
+    (a) => a.kind === "delivery" && !a.filename.includes("-gen.") && !a.filename.includes("-gen-"),
+  );
   const generating = busy === "generate" || generation?.status === "running";
   const hasOutput = Boolean(generation?.slots.some((s) => s.stillUrl || s.videoUrl));
   const stuckWaiting = generation?.status === "running" && !hasOutput;
@@ -224,7 +226,8 @@ function Detail({
           <section className="panel p-5">
             <h2 className="font-display text-xl">Generate</h2>
             <p className="mt-1 text-sm text-muted">
-              Watch each clip. Pass or mark needs-fix before the 20s/40s master is assembled. Mascot stays a separate extra.
+              Watch each take. Made the cut puts it in the {PRODUCTS[order.product]?.durationSeconds ?? 20}s
+              master. Cut this out deletes it from the library.
             </p>
             {generation?.error ? <p className="mt-2 text-sm text-danger">{generation.error}</p> : null}
             {!canGenerate ? (
@@ -288,15 +291,20 @@ function Detail({
                 {generation.slots.map((s) => {
                   const playable = Boolean(s.videoUrl || s.stillUrl);
                   const noteVal = fixNotes[s.id] ?? s.qcNote ?? "";
+                  const inCut = s.qc === "pass";
+                  const cutOut = s.qc === "fix" && !playable;
+                  const extra = s.id === "mascot";
                   return (
                     <li key={s.id} className="min-w-0 text-sm">
                       <div className="flex items-baseline justify-between gap-3">
                         <span className="font-medium">{s.label}</span>
                         <span className="text-xs uppercase tracking-wider text-muted">
-                          {s.qc === "pass"
-                            ? "passed"
-                            : s.qc === "fix"
-                              ? "needs fix"
+                          {inCut
+                            ? extra
+                              ? "keep as extra"
+                              : "in the cut"
+                            : cutOut
+                              ? "cut"
                               : s.status === "queued"
                                 ? "waiting"
                                 : s.status === "still" && !s.stillUrl
@@ -310,10 +318,12 @@ function Detail({
                         </span>
                       </div>
                       {s.error ? <p className="mt-1 text-xs text-danger">{s.error}</p> : null}
-                      {s.qc === "fix" && !playable ? (
-                        <p className="mt-2 text-sm text-danger">Failed clip discarded. It will not go in the master.</p>
+                      {cutOut ? (
+                        <p className="mt-2 text-sm text-danger">
+                          Cut from the library. It will not go in the master.
+                        </p>
                       ) : null}
-                      {s.autoQc ? (
+                      {s.autoQc && playable ? (
                         <ul className="mt-2 space-y-1 text-xs">
                           {s.autoQc.checks.map((c) => (
                             <li key={c.id} className={c.ok ? "text-ok" : c.hard ? "text-danger" : "text-warn"}>
@@ -323,7 +333,7 @@ function Detail({
                           ))}
                         </ul>
                       ) : null}
-                      {playable && s.qc !== "fix" ? (
+                      {playable ? (
                         <div className="mt-2 max-h-[52vh] overflow-hidden rounded-md bg-elevated">
                           {s.videoUrl ? (
                             <video
@@ -338,10 +348,10 @@ function Detail({
                         </div>
                       ) : null}
                       {playable ? (
-                        <div className="mt-2 flex min-w-0 flex-wrap gap-2">
+                        <div className="mt-2 grid min-w-0 grid-cols-2 gap-2">
                           <Button
                             size="sm"
-                            variant={s.qc === "pass" ? "primary" : "secondary"}
+                            variant={inCut ? "primary" : "secondary"}
                             disabled={busy !== null}
                             onClick={() =>
                               void run("qc-slot", () =>
@@ -351,11 +361,11 @@ function Detail({
                               )
                             }
                           >
-                            Pass
+                            {extra ? "Keep extra" : "Made the cut"}
                           </Button>
                           <Button
                             size="sm"
-                            variant={s.qc === "fix" ? "danger" : "secondary"}
+                            variant="danger"
                             disabled={busy !== null}
                             onClick={() =>
                               void run("qc-slot", () =>
@@ -365,14 +375,14 @@ function Detail({
                               )
                             }
                           >
-                            Needs fix · discard
+                            Cut this out
                           </Button>
                         </div>
                       ) : null}
-                      {s.qc === "fix" || (playable && s.qc !== "pass") ? (
+                      {cutOut || (playable && !inCut) ? (
                         <div className="mt-2 grid gap-2">
                           <Label htmlFor={`fix-${s.id}`} className="sr-only">
-                            Fix note for {s.label}
+                            Note for {s.label}
                           </Label>
                           <Textarea
                             id={`fix-${s.id}`}
@@ -380,7 +390,7 @@ function Detail({
                             placeholder={
                               s.id === "hook"
                                 ? "e.g. Pronounce Heber City as HEE-ber City"
-                                : "What should change on the redo?"
+                                : "What should the next take change?"
                             }
                             value={noteVal}
                             onChange={(e) => setFixNotes((cur) => ({ ...cur, [s.id]: e.target.value }))}
@@ -397,7 +407,7 @@ function Detail({
                               )
                             }
                           >
-                            Redo {s.label.toLowerCase()}
+                            Shoot {s.label.toLowerCase()} again
                           </Button>
                         </div>
                       ) : null}
@@ -408,7 +418,8 @@ function Detail({
             ) : null}
             {generation && clipsReady && !allClipsPassed ? (
               <p className="mt-4 text-sm text-warn">
-                Pass every master clip before assembling. Still open: {qcOpen.join(", ")}.
+                {qcOpen.join(", ")} still {qcOpen.length === 1 ? "needs" : "need"} to make the cut before the{" "}
+                {PRODUCTS[order.product]?.durationSeconds ?? 20}s stitch.
               </p>
             ) : null}
             {generation && allClipsPassed ? (
@@ -418,7 +429,7 @@ function Detail({
                   disabled={busy !== null}
                   onClick={() => void run("assemble", () => adminAssemble({ data: { id: order.id } }))}
                 >
-                  Assemble {PRODUCTS[order.product]?.durationSeconds ?? 20}s master
+                  Stitch the {PRODUCTS[order.product]?.durationSeconds ?? 20}s from the cut
                 </Button>
               </div>
             ) : null}

@@ -218,7 +218,7 @@ export const adminQc = createServerFn({ method: "POST" })
     if (job) {
       const summary = clipQcSummary(order, job);
       if (!summary.allPassed) {
-        throw new Error(`Pass clip QC first. Still open: ${summary.open.join(", ") || "clips"}`);
+        throw new Error(`Not in the cut yet: ${summary.open.join(", ") || "clips"}`);
       }
     }
     return passQc(
