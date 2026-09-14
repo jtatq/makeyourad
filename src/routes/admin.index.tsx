@@ -71,13 +71,18 @@ function QueuePage() {
         ) : null}
         {dashboard.generationEngine === "imagine" ? (
           <div className="mb-4 rounded-md bg-elevated px-4 py-3 text-sm text-muted">
-            Generate queues stills for SuperGrok Imagine. Add XAI_API_KEY in Vercel if you want it to run on its own.
+            Generate is queued for SuperGrok Imagine until an xAI API key is on this box. Paste{" "}
+            <code className="text-fg">XAI_API_KEY</code> and Generate runs Image 2.0 / Video 1.5 on its own.
           </div>
         ) : !dashboard.aiAvailable ? (
           <div className="mb-4 rounded-md bg-warn px-4 py-3 text-sm text-fg">
-            Generate is off on this host. Add XAI_API_KEY in Vercel → Environment Variables, then Redeploy.
+            Generate is off. Add <code className="text-fg">XAI_API_KEY</code> on this droplet, then restart the app.
           </div>
-        ) : null}
+        ) : (
+          <div className="mb-4 rounded-md bg-elevated px-4 py-3 text-sm text-muted">
+            Generate runs on the xAI API — grok-imagine-image-2.0 and grok-imagine-video-1.5.
+          </div>
+        )}
         {sla.critical_20h.length > 0 ? (
           <div className="mb-4 rounded-md bg-danger px-4 py-3 text-sm text-fg">
             {sla.critical_20h.length} order{sla.critical_20h.length === 1 ? "" : "s"} past 20 hours.

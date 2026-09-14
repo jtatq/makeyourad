@@ -389,6 +389,7 @@ async function generateStill(prompt: string, ref: string | null): Promise<string
     prompt,
     n: 1,
     aspect_ratio: "9:16",
+    resolution: "2k",
   };
   const path = ref ? "/images/edits" : "/images/generations";
   if (ref) payload.image = { url: ref, type: "image_url" };
@@ -419,7 +420,7 @@ async function startVideo(prompt: string, imageUrl: string, duration: number): P
     model: VIDEO_MODEL,
     prompt,
     duration,
-    resolution: "720p",
+    resolution: "1080p",
     image: { url: imageUrl },
   };
   let res = await xaiFetch("/videos/generations", { method: "POST", body: JSON.stringify(payload) });

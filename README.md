@@ -20,8 +20,8 @@ TanStack Start, TypeScript, Tailwind, Postgres (Neon in production, embedded PGL
 | `RESEND_API_KEY` | production | Sends confirmation, delivery, and operator mail. Without it, mail is logged in the admin outbox. |
 | `FROM_EMAIL` | optional | Resend from-address. |
 | `ADMIN_PASSWORD` | optional | Alternate admin password if you do not want to type the operator token. |
-| `XAI_API_KEY` | optional | Fallback only. Operator Generate uses **SuperGrok Imagine** on this account by default. Set `GENERATION_ENGINE=xai` to force the REST key. |
-| `GENERATION_ENGINE` | optional | `imagine` (default) or `xai`. |
+| `XAI_API_KEY` | production | xAI REST. Generate uses **grok-imagine-image-2.0** (2K) and **grok-imagine-video-1.5** (1080p) on the droplet. SuperGrok Imagine is fallback only if this is unset. |
+| `GENERATION_ENGINE` | optional | `xai` when a key is present (default). Set `imagine` to force the SuperGrok worker queue. |
 | `DATABASE_URL` | production | Injected on deploy. Do not set in preview. |
 
 Never put secrets in client code.
