@@ -362,7 +362,7 @@ export function StudioDeck({
                 rows={2}
                 placeholder={
                   selectedTake.slotId === "hook"
-                    ? "Reshoot note · Pronounce Heber City as HEE-ber City"
+                    ? "Reshoot note · Pronounce Heber City, Utah — never U.T."
                     : "Reshoot note for this take"
                 }
                 value={note}

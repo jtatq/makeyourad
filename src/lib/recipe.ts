@@ -70,13 +70,13 @@ export function recipeSlots(opts: {
     id: "end_card",
     label: "End card",
     duration: opts.productId === "video-40" ? "5s" : "6s",
-    role: "Logo, business name, city, CTA, phone. Hold long enough to read.",
+    role: "Logo, business name, city and full state name, CTA, phone. Hold long enough to read.",
   };
 
   if (opts.productId === "video-20") {
     return [
       hook,
-      body(1, "10s", "They keep talking — city, proof, what they do. Stay on the person or cut to work from their photos."),
+      body(1, "10s", "They keep talking — city and full state name (Utah, never U.T.), proof, what they do. Stay on the person or cut to work from their photos."),
       end,
       ...(opts.mascot ? [mascot] : []),
     ];
@@ -86,7 +86,7 @@ export function recipeSlots(opts: {
     hook,
     body(1, "10s", "Talking-head continues: name the problem, then the promise."),
     body(2, "10s", "The work itself — still the same person, or a cut to their photos of the job."),
-    body(3, "10s", "Local proof, city, then hand to the end card."),
+    body(3, "10s", "Local proof, city and full state name (never letters), then hand to the end card."),
     end,
     ...(opts.mascot ? [mascot] : []),
   ];

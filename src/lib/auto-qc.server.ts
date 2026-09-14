@@ -3,6 +3,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { spokenState } from "./intake";
 
 const execFileAsync = promisify(execFile);
 
@@ -46,7 +47,8 @@ function cityHint(city: string): string {
 }
 
 export function pronunciationNote(city: string, state: string): string {
-  return `Pronounce the city clearly as ${cityHint(city)}, ${state}.`;
+  const place = `${cityHint(city)}, ${spokenState(state)}`;
+  return `Say the location as ${place}. Never spell the state as letters — never "U.T.", "A.Z.", or any two-letter abbreviation. The state is the full word ${spokenState(state)} only.`;
 }
 
 async function probeMedia(url: string): Promise<Probe | null> {

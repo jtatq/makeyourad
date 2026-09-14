@@ -9,6 +9,76 @@ export const US_STATES = [
   "SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC",
 ] as const;
 
+export const STATE_FULL_NAME: Record<(typeof US_STATES)[number], string> = {
+  AL: "Alabama",
+  AK: "Alaska",
+  AZ: "Arizona",
+  AR: "Arkansas",
+  CA: "California",
+  CO: "Colorado",
+  CT: "Connecticut",
+  DE: "Delaware",
+  FL: "Florida",
+  GA: "Georgia",
+  HI: "Hawaii",
+  ID: "Idaho",
+  IL: "Illinois",
+  IN: "Indiana",
+  IA: "Iowa",
+  KS: "Kansas",
+  KY: "Kentucky",
+  LA: "Louisiana",
+  ME: "Maine",
+  MD: "Maryland",
+  MA: "Massachusetts",
+  MI: "Michigan",
+  MN: "Minnesota",
+  MS: "Mississippi",
+  MO: "Missouri",
+  MT: "Montana",
+  NE: "Nebraska",
+  NV: "Nevada",
+  NH: "New Hampshire",
+  NJ: "New Jersey",
+  NM: "New Mexico",
+  NY: "New York",
+  NC: "North Carolina",
+  ND: "North Dakota",
+  OH: "Ohio",
+  OK: "Oklahoma",
+  OR: "Oregon",
+  PA: "Pennsylvania",
+  RI: "Rhode Island",
+  SC: "South Carolina",
+  SD: "South Dakota",
+  TN: "Tennessee",
+  TX: "Texas",
+  UT: "Utah",
+  VT: "Vermont",
+  VA: "Virginia",
+  WA: "Washington",
+  WV: "West Virginia",
+  WI: "Wisconsin",
+  WY: "Wyoming",
+  DC: "District of Columbia",
+};
+
+/** Spoken state. Never two-letter codes — "Utah", never "U.T." or "UT". */
+export function spokenState(state: string): string {
+  const raw = state.trim();
+  const code = raw.toUpperCase().replace(/\./g, "");
+  if (code in STATE_FULL_NAME) return STATE_FULL_NAME[code as keyof typeof STATE_FULL_NAME];
+  const named = Object.values(STATE_FULL_NAME).find((n) => n.toLowerCase() === raw.toLowerCase());
+  return named || raw;
+}
+
+export function spokenPlace(city: string, state: string): string {
+  const c = city.trim();
+  const s = spokenState(state);
+  if (c && s) return `${c}, ${s}`;
+  return c || s;
+}
+
 const assetSchema = z.object({
   filename: z.string().min(1).max(180),
   mime: z.string().min(1).max(80),

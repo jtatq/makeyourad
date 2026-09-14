@@ -14,6 +14,7 @@ import { buildPacket, type GenerationPacket } from "./prompts/compiler";
 import { TONE_PACKS } from "./prompts/tones";
 import { masterClips, type SlotId } from "./recipe";
 import { inspectClip, pronunciationNote, type AutoQcResult } from "./auto-qc.server";
+import { spokenPlace } from "./intake";
 import { PRODUCTS, type Tone } from "./products";
 import { stitchMasterFile } from "./stitch.server";
 
@@ -242,7 +243,7 @@ function stillPrompt(packet: GenerationPacket, slot: GenerationPacket["recipe"][
   const site = packet.website_profile;
   const lines = [
     `Photoreal local-business advertisement still, ${ratio}, cinematic, natural light.`,
-    `Business: ${i.businessName}, ${i.category_label} in ${i.city}, ${i.state}.`,
+    `Business: ${i.businessName}, ${i.category_label} in ${spokenPlace(i.city, i.state)}.`,
     `Slot: ${slot.label}. ${slot.role}`,
     `Tone: ${i.tone}. ${packet.recipe.structure}`,
     i.brief ? `Customer direction: ${i.brief}` : "",
@@ -254,7 +255,7 @@ function stillPrompt(packet: GenerationPacket, slot: GenerationPacket["recipe"][
   ];
   if (slot.id === "end_card" || slot.id === "static") {
     lines.push(
-      `On-screen type, clean and readable: ${i.businessName}. ${i.city}, ${i.state}. ${i.phone}. CTA: ${site?.cta || "Call today"}.`,
+      `On-screen type, clean and readable: ${i.businessName}. ${spokenPlace(i.city, i.state)}. ${i.phone}. CTA: ${site?.cta || "Call today"}. Never letter the state (not U.T.).`,
     );
   }
   if (slot.id === "hook") {
@@ -295,7 +296,7 @@ function imagineStillPrompt(
   const site = packet.website_profile;
   const tone = TONE_PACKS[i.tone];
   const parts = [
-    `A photoreal ${ratio} advertisement still for ${i.businessName}, a ${i.category_label} in ${i.city}, ${i.state}.`,
+    `A photoreal ${ratio} advertisement still for ${i.businessName}, a ${i.category_label} in ${spokenPlace(i.city, i.state)}.`,
     `This frame is the ${slot.label.toLowerCase()}: ${slot.role}`,
     `The look is ${i.tone}: ${tone.picture}`,
   ];
@@ -305,7 +306,7 @@ function imagineStillPrompt(
   if (site?.about) parts.push(site.about.slice(0, 220));
   if (slot.id === "end_card" || slot.id === "static") {
     parts.push(
-      `Put clean readable type on screen: ${i.businessName}. ${i.city}, ${i.state}. ${i.phone}. ${site?.cta || "Call today"}.`,
+      `Put clean readable type on screen: ${i.businessName}. ${spokenPlace(i.city, i.state)}. ${i.phone}. ${site?.cta || "Call today"}. Write the full state name, never UT or U.T.`,
     );
   }
   if (slot.id === "hook") {
@@ -700,6 +701,10 @@ export async function regenSlot(
     const add = ` Revision: ${extra}`;
     if (slot.stillPrompt && !slot.stillPrompt.includes(extra)) slot.stillPrompt += add;
     if (slot.motionPrompt && !slot.motionPrompt.includes(extra)) slot.motionPrompt += add;
+  }
+  const loc = pronunciationNote(order.city, order.state);
+  if ((slot.id === "hook" || slot.id.startsWith("body")) && slot.motionPrompt && !slot.motionPrompt.includes("Never spell the state")) {
+    slot.motionPrompt += ` ${loc}`;
   }
   slot.status = "queued";
   await discardSlotAssets(orderId, slot, job);

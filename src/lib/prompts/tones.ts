@@ -14,7 +14,7 @@ export const TONE_PACKS: Record<Tone, TonePack> = {
     id: "energetic",
     direction:
       "Upbeat and decisive. Fast but not chaotic. A reason to act today. Smile in the voice, never a shout.",
-    vo: "Short sentences. Present tense. One benefit per line. End on the CTA.",
+    vo: "Short sentences. Present tense. One benefit per line. End on the CTA. If you name the state, say the full word (Utah), never letters (U.T.).",
     picture:
       "Punch-in close-ups, motion in frame (tools, hands, doors, weather). Saturated but natural color. Hard cuts.",
     music: "Bright percussion bed, medium-fast. No lyrics competing with VO.",
@@ -23,7 +23,7 @@ export const TONE_PACKS: Record<Tone, TonePack> = {
     id: "trustworthy",
     direction:
       "Calm, neighborly, specific. No hype words. Feels like a local who shows up when they say they will.",
-    vo: "Even, unhurried, plain speech. Name the city. Promise only what the brief supports.",
+    vo: "Even, unhurried, plain speech. Name the city and the full state (Utah, not U.T.). Promise only what the brief supports.",
     picture:
       "Stable frames, real locations, faces if the photos allow. Soft daylight. Hold shots long enough to read them.",
     music: "Low, warm, unobtrusive. Space for VO. No trailer drums.",
@@ -32,7 +32,7 @@ export const TONE_PACKS: Record<Tone, TonePack> = {
     id: "premium",
     direction:
       "Quiet confidence. Fewer words, more craft. The business feels established, not flashy.",
-    vo: "Measured, lower register, pauses. No slang. CTA is an invitation, not a command.",
+    vo: "Measured, lower register, pauses. No slang. CTA is an invitation, not a command. Full state names only — never letter-by-letter (not U.T.).",
     picture:
       "Shallow depth, texture, negative space. Slow push-ins. Cream and ink grade. No stock-looking smiles.",
     music: "Sparse piano or strings, low volume. Silence is allowed.",
@@ -41,7 +41,7 @@ export const TONE_PACKS: Record<Tone, TonePack> = {
     id: "friendly",
     direction:
       "Warm, easy, human. A wave from across the street. Helpful, not salesy.",
-    vo: "Conversational. Contractions ok. Talk to one person, not a crowd.",
+    vo: "Conversational. Contractions ok. Talk to one person, not a crowd. Say the full state (Utah), never letters (U.T.).",
     picture:
       "Open faces, everyday light, a little humor if the photos support it. Soft cuts, not whip pans.",
     music: "Acoustic or light indie bed. Smile in the arrangement.",
