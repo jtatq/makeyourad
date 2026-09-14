@@ -140,11 +140,12 @@ export const adminGenerate = createServerFn({ method: "POST" })
       id: z.string(),
       action: z.enum(["start", "tick"]).default("tick"),
       force: z.boolean().optional(),
+      direction: z.string().max(2000).optional(),
     }),
   )
   .handler(async ({ data }) => {
     requireAdmin();
-    return tickGeneration(data.id, { action: data.action, force: data.force });
+    return tickGeneration(data.id, { action: data.action, force: data.force, direction: data.direction });
   });
 
 export const adminApplyProfile = createServerFn({ method: "POST" })

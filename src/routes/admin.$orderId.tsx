@@ -78,6 +78,7 @@ function Detail({
   const [names, setNames] = useState(false);
   const [clean, setClean] = useState(false);
   const [note, setNote] = useState("");
+  const [direction, setDirection] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -198,6 +199,29 @@ function Detail({
               stitching={busy === "assemble"}
               canGenerate={canGenerate}
               generateLabel={generateLabel}
+              direction={direction || generation?.direction || ""}
+              onDirection={setDirection}
+              onApplyDirection={() => {
+                const text = (direction || generation?.direction || "").trim();
+                const spot = generation?.slots.find((s) => s.id === "hook") ?? generation?.slots[0];
+                if (spot) {
+                  void run("regen", () =>
+                    adminRegenSlot({
+                      data: {
+                        id: order.id,
+                        slotId: spot.id as "hook" | "mascot" | "body_1" | "body_2" | "body_3" | "end_card" | "static",
+                        note: text,
+                      },
+                    }),
+                  );
+                } else {
+                  void run("generate", () =>
+                    adminGenerate({
+                      data: { id: order.id, action: "start", force: true, direction: text },
+                    }),
+                  );
+                }
+              }}
               onSave={(clips) => run("timeline", () => adminSaveTimeline({ data: { id: order.id, clips } }))}
               onCutFromLibrary={(slotId) =>
                 void run("qc-slot", () =>
@@ -228,6 +252,7 @@ function Detail({
                     data: {
                       id: order.id,
                       action: "start",
+                      direction: (direction || generation?.direction || "").trim() || undefined,
                       force:
                         generating ||
                         generation?.status === "done" ||

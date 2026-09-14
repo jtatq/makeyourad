@@ -64,6 +64,7 @@ export async function stitchMasterFile(opts: {
   clips: Array<{ url: string; seconds: number; slotId: string }>;
   aspect: "9:16" | "16:9" | "1:1";
   crf?: number;
+  targetSeconds?: number;
 }): Promise<Buffer> {
   if (opts.clips.length === 0) throw new Error("No clips to stitch");
   const dir = await mkdtemp(join(tmpdir(), "mya-stitch-"));
@@ -142,6 +143,37 @@ export async function stitchMasterFile(opts: {
     await writeFile(list, parts.map((p) => `file '${p.replaceAll("'", "'\\''")}'`).join("\n"));
     const master = join(dir, "master.mp4");
     await runFfmpeg(["-f", "concat", "-safe", "0", "-i", list, "-c", "copy", "-movflags", "+faststart", master]);
+    const target = opts.targetSeconds;
+    if (target && target > 0) {
+      const padded = join(dir, "padded.mp4");
+      await runFfmpeg([
+        "-i",
+        master,
+        "-t",
+        String(target),
+        "-vf",
+        `tpad=stop_mode=clone:stop_duration=${target},scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},fps=24,format=yuv420p`,
+        "-af",
+        "aresample=48000,apad",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-crf",
+        String(crf),
+        "-c:a",
+        "aac",
+        "-ac",
+        "2",
+        "-ar",
+        "48000",
+        "-shortest",
+        "-movflags",
+        "+faststart",
+        padded,
+      ]);
+      return await readFile(padded);
+    }
     return await readFile(master);
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => undefined);

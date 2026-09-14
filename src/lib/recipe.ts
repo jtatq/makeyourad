@@ -33,6 +33,9 @@ export function aspectRatioPriority(platforms: Platform[]): AspectRatio[] {
   return out;
 }
 
+const SPOT_ROLE =
+  "ONE CONTINUOUS SPOT. Same room, same person, same light, same music bed from first frame through the last. Speak the full script. In the last three seconds hold and super name, city (full state word), phone, CTA. Do not cut to a separate end-card graphic. Never say how long the ad is.";
+
 export function recipeSlots(opts: {
   productId: ProductId;
   mascot: boolean;
@@ -48,98 +51,37 @@ export function recipeSlots(opts: {
     ];
   }
 
-  const hook: RecipeSlot = {
+  const duration = opts.productId === "video-40" ? "40s" : opts.productId === "video-12" ? "12s" : "20s";
+  const spot: RecipeSlot = {
     id: "hook",
-    label: "Hook",
-    duration: opts.productId === "video-40" ? "5s" : opts.productId === "video-12" ? "3s" : "4s",
-    role: "Talking-head open: owner or tech on camera in front of the truck, van, or house, speaking straight to the viewer. Never say how long the ad is.",
+    label: "Spot",
+    duration,
+    role: SPOT_ROLE,
   };
   const mascot: RecipeSlot = {
     id: "mascot",
     label: "Mascot (extra)",
     duration: "6s",
-    role: "Standalone mascot spot. Delivered as its own video — not cut into the 20s/40s master.",
+    role: "Standalone mascot spot. Delivered as its own video — not cut into the master.",
   };
-  const body = (n: 1 | 2 | 3, duration: string, role: string): RecipeSlot => ({
-    id: `body_${n}`,
-    label: `Body ${n}`,
-    duration,
-    role,
-  });
-  const end: RecipeSlot = {
-    id: "end_card",
-    label: "End card",
-    duration: opts.productId === "video-40" ? "5s" : opts.productId === "video-12" ? "3s" : "6s",
-    role: "Logo, business name, city and full state name, CTA, phone. Hold long enough to read. Do not speak the runtime.",
-  };
-
-  if (opts.productId === "video-12") {
-    return [
-      hook,
-      body(1, "6s", "The rest of the short-form line. Punchy. Never say twelve seconds or any duration."),
-      end,
-      ...(opts.mascot ? [mascot] : []),
-    ];
-  }
-
-  if (opts.productId === "video-20") {
-    return [
-      hook,
-      body(1, "10s", "They keep talking — city and full state name (Utah, never U.T.), proof, what they do. Stay on the person or cut to work from their photos."),
-      end,
-      ...(opts.mascot ? [mascot] : []),
-    ];
-  }
-
-  return [
-    hook,
-    body(1, "10s", "Talking-head continues: name the problem, then the promise."),
-    body(2, "10s", "The work itself — still the same person, or a cut to their photos of the job."),
-    body(3, "10s", "Local proof, city and full state name (never letters), then hand to the end card."),
-    end,
-    ...(opts.mascot ? [mascot] : []),
-  ];
+  return opts.mascot ? [spot, mascot] : [spot];
 }
 
 export function recipeSummary(productId: ProductId, mascot: boolean, tone: Tone): string {
   if (productId === "static") {
     return `Static ad · ${tone} · one still in 9:16, 1:1, and 16:9.`;
   }
-  if (productId === "video-12") {
-    return `12s social · ${tone} · hook + body + end card.${mascot ? " Mascot is a separate extra video." : ""}`;
-  }
-  const seconds = productId === "video-40" ? 40 : 20;
-  const bodies = productId === "video-40" ? "hook + 3 body clips + end card, stitched to 40s" : "hook + 1 body clip + end card, stitched to 20s";
-  const extra = mascot ? " Mascot is a separate extra video." : "";
-  return `${seconds}s video · ${tone} · ${bodies}.${extra}`;
+  const seconds = productId === "video-40" ? 40 : productId === "video-12" ? 12 : 20;
+  return `${seconds}s one-shot · ${tone} · full script, music through the end card.${mascot ? " Mascot is a separate extra video." : ""}`;
 }
 
 export type StitchClip = { id: Exclude<SlotId, "mascot" | "static">; seconds: number };
 
-/** Main-timeline clips that concat to the paid 20s / 40s master. Mascot is not included. */
+/** Main-timeline clips. One-shot spots are a single hook. */
 export function masterClips(productId: ProductId): StitchClip[] {
   if (productId === "static") return [];
-  if (productId === "video-12") {
-    return [
-      { id: "hook", seconds: 3 },
-      { id: "body_1", seconds: 6 },
-      { id: "end_card", seconds: 3 },
-    ];
-  }
-  if (productId === "video-20") {
-    return [
-      { id: "hook", seconds: 4 },
-      { id: "body_1", seconds: 10 },
-      { id: "end_card", seconds: 6 },
-    ];
-  }
-  return [
-    { id: "hook", seconds: 5 },
-    { id: "body_1", seconds: 10 },
-    { id: "body_2", seconds: 10 },
-    { id: "body_3", seconds: 10 },
-    { id: "end_card", seconds: 5 },
-  ];
+  const seconds = productId === "video-40" ? 40 : productId === "video-12" ? 12 : 20;
+  return [{ id: "hook", seconds }];
 }
 
 export function isMasterSlot(id: SlotId): boolean {

@@ -29,6 +29,9 @@ type Props = {
   onStitch: () => void;
   onGenerate: () => void;
   generateLabel: string;
+  direction: string;
+  onDirection: (value: string) => void;
+  onApplyDirection: () => void;
 };
 
 function nid() {
@@ -56,6 +59,9 @@ export function StudioDeck({
   onStitch,
   onGenerate,
   generateLabel,
+  direction,
+  onDirection,
+  onApplyDirection,
 }: Props) {
   const [line, setLine] = useState<TimelineClip[]>(timeline);
   const [selected, setSelected] = useState<string | null>(takes.find((t) => t.url)?.slotId.toString() ?? null);
@@ -245,6 +251,30 @@ export function StudioDeck({
           </Button>
         </div>
       </header>
+
+      <div className="border-b border-border px-4 py-4 sm:px-5">
+        <p className="text-xs uppercase tracking-wider text-muted">Direction change</p>
+        <p className="mt-1 text-sm text-muted">
+          Full script renders as one spot. Restage without rewriting copy — lighting, pace, hold the end card, keep the
+          same music.
+        </p>
+        <Textarea
+          className="mt-3"
+          rows={3}
+          value={direction}
+          onChange={(e) => onDirection(e.target.value)}
+          placeholder="e.g. Same room and piano bed through the end card. Warmer light. Speak slower. Super the phone last."
+        />
+        <Button
+          className="mt-3"
+          size="sm"
+          variant="secondary"
+          disabled={busy || !canGenerate || direction.trim().length < 4}
+          onClick={onApplyDirection}
+        >
+          Apply direction
+        </Button>
+      </div>
 
       <div className="grid min-w-0 gap-0 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
         <div className="flex flex-col border-b border-border bg-bg lg:border-b-0 lg:border-r">

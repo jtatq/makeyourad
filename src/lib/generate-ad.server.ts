@@ -60,6 +60,7 @@ export type GenerationJob = {
   mascotUrl?: string;
   assembleRequested?: boolean;
   timeline?: TimelineClip[];
+  direction?: string;
   slots: GenSlotState[];
 };
 
@@ -111,7 +112,7 @@ function slotSeconds(duration: string): number | null {
   if (duration === "still") return null;
   const nums = duration.match(/\d+/g)?.map(Number) ?? [];
   if (nums.length === 0) return 6;
-  return Math.min(15, Math.max(4, Math.max(...nums)));
+  return Math.min(40, Math.max(4, Math.max(...nums)));
 }
 
 function imagineSeconds(duration: string): 6 | 10 | 15 | null {
@@ -239,6 +240,29 @@ function pickUrl(body: unknown): string | null {
   return null;
 }
 
+function continuityLine(packet: GenerationPacket, direction?: string): string {
+  const i = packet.intake;
+  const cta = packet.website_profile?.cta || "Call today";
+  const music = TONE_PACKS[i.tone].music;
+  const dir = direction?.trim();
+  return [
+    "ONE CONTINUOUS SHOT. Do not cut to a new location or a separate end-card graphic.",
+    `Music: ${music} One bed from frame one through the last frame — never restart, never drop out on the end card.`,
+    `In the last three seconds the camera holds and clean type fades on: ${i.businessName}. ${spokenPlace(i.city, i.state)}. ${i.phone}. ${cta}.`,
+    "Never speak the ad length. Never say twelve seconds, twenty seconds, or forty seconds.",
+    dir ? `DIRECTION CHANGE (this overrides the previous take): ${dir}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function spokenForSlot(packet: GenerationPacket, slotId: string): string {
+  if (slotId === "mascot" || slotId === "static" || slotId === "end_card") {
+    return slotScriptLine(packet.intake.brief, packet.product, slotId);
+  }
+  return extractProductScript(packet.intake.brief, packet.product);
+}
+
 function stillPrompt(packet: GenerationPacket, slot: GenerationPacket["recipe"]["slots"][number], ratio: string) {
   const i = packet.intake;
   const site = packet.website_profile;
@@ -247,28 +271,29 @@ function stillPrompt(packet: GenerationPacket, slot: GenerationPacket["recipe"][
     `Business: ${i.businessName}, ${i.category_label} in ${spokenPlace(i.city, i.state)}.`,
     `Slot: ${slot.label}. ${slot.role}`,
     `Tone: ${i.tone}. ${packet.recipe.structure}`,
-    slotScriptLine(i.brief, packet.product, slot.id)
-      ? `EXACT SCRIPT for this shot only (speak these words, do not paraphrase): ${slotScriptLine(i.brief, packet.product, slot.id)}`
+    extractProductScript(i.brief, packet.product)
+      ? `EXACT SCRIPT (speak these words, do not paraphrase): ${extractProductScript(i.brief, packet.product)}`
       : "",
     site?.tagline ? `Tagline: ${site.tagline}` : "",
     site?.services?.length ? `Services: ${site.services.slice(0, 6).join(", ")}` : "",
     site?.about ? `About: ${site.about.slice(0, 280)}` : "",
     `Use the real business. Do not invent a different company or a celebrity.`,
     `No watermarks, no agency slogans, no UI chrome.`,
-    `Never speak the ad length. Never say twelve seconds, twenty seconds, forty seconds, or any runtime.`,
+    `Never say twelve seconds, twenty seconds, forty seconds, or any runtime.`,
+    continuityLine(packet),
   ];
   if (slot.id === "end_card" || slot.id === "static") {
     lines.push(
       `On-screen type, clean and readable: ${i.businessName}. ${spokenPlace(i.city, i.state)}. ${i.phone}. CTA: ${site?.cta || "Call today"}. Never letter the state (not U.T.).`,
     );
   }
-  if (slot.id === "hook") {
-    const line = slotScriptLine(i.brief, packet.product, slot.id);
+  if (slot.id === "hook" || slot.id.startsWith("body")) {
+    const line = extractProductScript(i.brief, packet.product);
     lines.push(
       "Talking-head: a real owner or technician from the reference photos stands in the driveway or at the storefront, facing camera, mid-speech. Van, truck, or house from the uploads sits behind them. Match their face, shirt, and wrap — do not invent lettering.",
     );
     if (line) {
-      lines.push(`Mouth the exact line: "${line}". Captions match those words. This is the script, not an idea.`);
+      lines.push(`Mouth the exact full script: "${line}". Captions match those words. This is the script, not an idea.`);
     }
   }
   if (slot.id === "mascot" && i.mascotDescription) lines.push(`Mascot: ${i.mascotDescription}`);
@@ -420,30 +445,35 @@ async function generateStill(prompt: string, ref: string | null): Promise<string
 }
 
 async function startVideo(prompt: string, imageUrl: string, duration: number): Promise<string> {
-  const payload: Record<string, unknown> = {
-    model: VIDEO_MODEL,
-    prompt,
-    duration,
-    resolution: "1080p",
-    image: { url: imageUrl },
-  };
-  let res = await xaiFetch("/videos/generations", { method: "POST", body: JSON.stringify(payload) });
-  if (!res.ok) {
-    delete payload.resolution;
-    res = await xaiFetch("/videos/generations", { method: "POST", body: JSON.stringify(payload) });
-  }
-  const body: unknown = await res.json().catch(() => null);
-  if (!res.ok) {
-    const msg =
+  const tries = [...new Set([duration, 15, 10, 6])].filter((d) => d >= 1 && d <= 40);
+  let lastMsg = "xAI video error";
+  for (const d of tries) {
+    const payload: Record<string, unknown> = {
+      model: VIDEO_MODEL,
+      prompt,
+      duration: d,
+      resolution: "1080p",
+      image: { url: imageUrl },
+    };
+    let res = await xaiFetch("/videos/generations", { method: "POST", body: JSON.stringify(payload) });
+    if (!res.ok) {
+      delete payload.resolution;
+      res = await xaiFetch("/videos/generations", { method: "POST", body: JSON.stringify(payload) });
+    }
+    const body: unknown = await res.json().catch(() => null);
+    if (res.ok) {
+      const rec = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+      const id = (typeof rec.request_id === "string" && rec.request_id) || (typeof rec.id === "string" && rec.id) || "";
+      if (id) return id;
+      lastMsg = "Video generation returned no request id";
+      continue;
+    }
+    lastMsg =
       body && typeof body === "object" && "error" in body
         ? JSON.stringify((body as { error: unknown }).error)
         : `xAI video error ${res.status}`;
-    throw new Error(msg.slice(0, 280));
   }
-  const rec = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
-  const id = (typeof rec.request_id === "string" && rec.request_id) || (typeof rec.id === "string" && rec.id) || "";
-  if (!id) throw new Error("Video generation returned no request id");
-  return id;
+  throw new Error(lastMsg.slice(0, 280));
 }
 
 async function pollVideo(requestId: string): Promise<{ status: string; url: string | null }> {
@@ -731,8 +761,9 @@ export async function regenSlot(
   if (!slot) throw new Error("Unknown clip");
   const extra = (note ?? slot.qcNote)?.trim();
   if (extra) {
+    job.direction = extra;
     slot.qcNote = extra;
-    const add = ` Revision: ${extra}`;
+    const add = ` DIRECTION CHANGE (this overrides the previous take): ${extra}`;
     if (slot.stillPrompt && !slot.stillPrompt.includes(extra)) slot.stillPrompt += add;
     if (slot.motionPrompt && !slot.motionPrompt.includes(extra)) slot.motionPrompt += add;
   }
@@ -790,12 +821,14 @@ export async function assembleMaster(
       clips: stitch.clips,
       aspect: stitch.aspectRatio,
       crf: stitch.durationSeconds >= 40 ? 32 : 28,
+      targetSeconds: stitch.durationSeconds,
     });
     if (buf.length > 4_500_000) {
       buf = await stitchMasterFile({
         clips: stitch.clips,
         aspect: stitch.aspectRatio,
         crf: 36,
+        targetSeconds: stitch.durationSeconds,
       });
     }
     const dataUrl = `data:video/mp4;base64,${buf.toString("base64")}`;
@@ -819,49 +852,42 @@ async function clearGenFiles(orderId: string) {
   const sql = await getSql();
   await sql.query(
     `delete from order_assets where order_id = $1 and kind in ('still','delivery')
-      and (filename like '%-gen.%' or filename like '%-20s.mp4' or filename like '%-40s.mp4' or filename like '%-mascot.mp4')`,
+      and (filename like '%-gen.%' or filename like '%-12s.mp4' or filename like '%-20s.mp4' or filename like '%-40s.mp4' or filename like '%-mascot.mp4')`,
     [orderId],
   );
 }
 
-function initJob(packet: GenerationPacket, engine: GenEngine): GenerationJob {
+function initJob(packet: GenerationPacket, engine: GenEngine, direction?: string): GenerationJob {
   const now = new Date().toISOString();
   const ratio = packet.aspect_ratio_priority[0] ?? "9:16";
+  const extra = continuityLine(packet, direction);
   return {
     status: "running",
     engine,
     startedAt: now,
     updatedAt: now,
+    direction: direction?.trim() || undefined,
     slots: packet.recipe.slots.map((s) => {
       const target = slotSeconds(s.duration);
       const duration = engine === "imagine" ? imagineSeconds(s.duration) : target;
+      const spoken = spokenForSlot(packet, s.id);
+      const still = (engine === "imagine" ? imagineStillPrompt(packet, s, ratio) : stillPrompt(packet, s, ratio)) + " " + extra;
+      const motion =
+        duration != null
+          ? (engine === "imagine"
+              ? imagineMotionPrompt(s, duration, packet.intake.tone, packet.intake.city, packet.intake.state, spoken)
+              : motionPrompt(s, duration, packet.intake.tone, packet.intake.city, packet.intake.state, spoken)) +
+            " " +
+            extra
+          : undefined;
       return {
         id: s.id,
         label: s.label,
         duration,
         targetSeconds: target,
         status: "queued" as const,
-        stillPrompt: engine === "imagine" ? imagineStillPrompt(packet, s, ratio) : stillPrompt(packet, s, ratio),
-        motionPrompt:
-          duration != null
-            ? engine === "imagine"
-              ? imagineMotionPrompt(
-                  s,
-                  duration,
-                  packet.intake.tone,
-                  packet.intake.city,
-                  packet.intake.state,
-                  slotScriptLine(packet.intake.brief, packet.product, s.id),
-                )
-              : motionPrompt(
-                  s,
-                  duration,
-                  packet.intake.tone,
-                  packet.intake.city,
-                  packet.intake.state,
-                  slotScriptLine(packet.intake.brief, packet.product, s.id),
-                )
-            : undefined,
+        stillPrompt: still,
+        motionPrompt: motion,
       };
     }),
   };
@@ -1093,7 +1119,7 @@ export async function completeImagineSlot(opts: {
 
 export async function tickGeneration(
   orderId: string,
-  opts: { action: "start" | "tick"; force?: boolean },
+  opts: { action: "start" | "tick"; force?: boolean; direction?: string },
 ): Promise<{ job: GenerationJob; order: OrderRow }> {
   const engine = generationEngine();
   if (engine === "xai" && !apiKey()) {
@@ -1117,7 +1143,7 @@ export async function tickGeneration(
       const assets = (await listAssets({ orderId })).filter((a) => a.kind !== "delivery" && a.kind !== "still");
       const packet = packetFromOrder(order, assets);
       await clearGenFiles(orderId);
-      job = initJob(packet, engine);
+      job = initJob(packet, engine, opts.direction?.trim() || job?.direction);
       await saveGeneration(orderId, job);
       const via = engine === "imagine" ? "SuperGrok Imagine" : "xAI API";
       await appendEvent(orderId, "generate", `Started generation · ${job.slots.length} slots · ${via}.`, "grok");
@@ -1168,7 +1194,7 @@ export async function tickGeneration(
       slot.status = "still";
       await saveGeneration(orderId, job);
       const ref = await referenceUri(orderId, slot.id === "end_card" || slot.id === "static");
-      const url = await generateStill(stillPrompt(packet, recipeSlot, ratio), ref);
+      const url = await generateStill(slot.stillPrompt || stillPrompt(packet, recipeSlot, ratio), ref);
       slot.stillUrl = url;
       const stillAst = await attachGen(orderId, `${slot.id}-gen.jpg`, url, "image/jpeg", slot.duration ? "still" : "delivery");
       trackAsset(slot, stillAst.id);
@@ -1183,14 +1209,15 @@ export async function tickGeneration(
         await applyAutoQc(order, job, slot);
       } else {
         const vidId = await startVideo(
-          motionPrompt(
-            recipeSlot,
-            slot.duration,
-            order.tone,
-            order.city,
-            order.state,
-            slotScriptLine(order.brief, order.product, slot.id),
-          ),
+          slot.motionPrompt ||
+            motionPrompt(
+              recipeSlot,
+              slot.duration,
+              order.tone,
+              order.city,
+              order.state,
+              spokenForSlot(packet, slot.id),
+            ),
           slot.stillUrl,
           slot.duration,
         );
@@ -1202,14 +1229,15 @@ export async function tickGeneration(
       if (!slot.videoRequestId) {
         if (!slot.stillUrl) throw new Error("Missing still for video");
         slot.videoRequestId = await startVideo(
-          motionPrompt(
-            recipeSlot,
-            slot.duration ?? 6,
-            order.tone,
-            order.city,
-            order.state,
-            slotScriptLine(order.brief, order.product, slot.id),
-          ),
+          slot.motionPrompt ||
+            motionPrompt(
+              recipeSlot,
+              slot.duration ?? 6,
+              order.tone,
+              order.city,
+              order.state,
+              spokenForSlot(packet, slot.id),
+            ),
           slot.stillUrl,
           slot.duration ?? 6,
         );
