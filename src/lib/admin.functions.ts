@@ -8,6 +8,7 @@ import {
   assembleMaster,
   clipQcSummary,
   generationEngine,
+  generateWorkerEnabled,
   loadGeneration,
   regenSlot,
   reviewSlot,
@@ -259,7 +260,9 @@ export const adminQc = createServerFn({ method: "POST" })
     if (job) {
       const summary = clipQcSummary(order, job);
       if (!summary.allPassed) {
-        throw new Error(`Not in the cut yet: ${summary.open.join(", ") || "clips"}`);
+        throw new Error(
+          `Not in the cut yet: ${summary.open.join(", ") || "clips"}. Scroll up, tap Add on that take, then Pass QC.`,
+        );
       }
     }
     return passQc(

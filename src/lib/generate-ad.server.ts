@@ -547,6 +547,12 @@ export async function saveTimeline(
   const job = await loadGeneration(orderId);
   if (!job) throw new Error("No clips to sequence");
   job.timeline = clips.filter((c) => c.url && c.seconds > 0);
+  const onLine = new Set(job.timeline.map((c) => c.slotId));
+  for (const slot of job.slots) {
+    if (onLine.has(slot.id) && (slot.videoUrl || slot.stillUrl)) {
+      slot.qc = "pass";
+    }
+  }
   job.masterUrl = undefined;
   job.assembleRequested = false;
   await saveGeneration(orderId, job);
