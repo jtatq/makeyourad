@@ -212,7 +212,6 @@ export function labeledBriefFromParsed(parsed: ParsedBriefing, fallback: string)
   if (parsed.voiceoverScript) parts.push(`20 second:\n${parsed.voiceoverScript.trim()}`);
   if (parsed.cameraScript) parts.push(`40 second:\n${parsed.cameraScript.trim()}`);
   if (parts.length) return parts.join("\n\n");
-  if (parsed.targetingNotes) return parsed.targetingNotes.trim();
   return fallback.trim();
 }
 

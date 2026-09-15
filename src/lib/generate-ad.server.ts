@@ -288,6 +288,7 @@ function continuityLine(packet: GenerationPacket, direction?: string): string {
     `In the last three seconds the camera holds and clean type fades on: ${i.businessName}. ${spokenPlace(i.city, i.state)}. ${i.phone}. ${cta}.`,
     "Never speak the ad length. Never say twelve seconds, twenty seconds, or forty seconds.",
     dir ? `DIRECTION CHANGE (this overrides the previous take): ${dir}` : "",
+    "This is the customer-facing ad. Do not mention geofences, grocery or retail anchors, household income, age ranges, pilates studios, golf communities, or any media-buy targeting.",
   ]
     .filter(Boolean)
     .join(" ");
@@ -364,6 +365,7 @@ function motionPrompt(
     `Tone: ${tone}. ${talking}`,
     `Photoreal, no morphing logos, no extra text, no watermarks.`,
     `Never say twelve seconds, twenty seconds, forty seconds, or any runtime. Hard cut when the line is done.`,
+    "Do not mention geofences, grocery or retail anchors, or media-buy targeting.",
   ].join(" ");
 }
 
@@ -401,6 +403,7 @@ function imagineStillPrompt(
   }
   if (slot.id === "mascot" && i.mascotDescription) parts.push(`Mascot: ${i.mascotDescription}`);
   parts.push("Use the real business. No celebrity, no watermark, no UI chrome, no agency slogan.");
+  parts.push("Do not mention geofences, grocery or retail anchors, household income, age ranges, pilates studios, golf communities, or any media-buy targeting.");
   return parts.join(" ");
 }
 
@@ -433,6 +436,7 @@ function imagineMotionPrompt(
     talking,
     "Photoreal, no morphing logos, no extra text, no watermarks.",
     "Never say twelve seconds, twenty seconds, forty seconds, or any runtime. Hard cut when the line is done.",
+    "Do not mention geofences, grocery or retail anchors, or media-buy targeting.",
   ].join(" ");
 }
 

@@ -30,8 +30,8 @@ export function AudienceProfilePaste({ mode, busy, onSubmit }: Props) {
     <section className="panel p-5">
       <h2 className="font-display text-xl">Audience profile</h2>
       <p className="mt-1 text-sm text-muted">
-        Paste the GPT briefing or PAGE_3 JSON. We create the 20s job from the Voiceover (25–30s) script. 12s and 40s
-        stay in the paste for later — they are not generated yet.
+        Paste the GPT briefing. We use the Voiceover (25–30s) script and business info only. Geofences, Smith’s,
+        income, and PAGE_3 targeting never go in the ad.
       </p>
       <div className="mt-4">
         <Label htmlFor="audience-profile">Paste</Label>

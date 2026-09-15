@@ -7,10 +7,28 @@ const DURATION_SPEAK =
 const SECTION_HEAD =
   /^(?:camera-facing|voice-?over|short-form(?:\s+social)?)(?:\s*[—\-–:].*)?$/i;
 const LEADING_LABEL = /^(?:12|20|40)\s*seconds?\s*[:\-–.]\s*/i;
+const MEDIA_BUY_LINE =
+  /\b(geofenc|in-?market audience|household income|target women|primary (?:store|retail)|suggested additional|pilates studios|fitness and wellness|luxury residential|golf communit|media[- ]buy|seven miles|\$\d{2,3},\d{3}\+)\b/i;
+
+/** Drop media-buy / geofence copy. Ads never mention the targeting plan. */
+export function stripMediaBuy(text: string): string {
+  let t = text.replace(/\r\n/g, "\n");
+  t = t.replace(/(?:^|\n)\s*9\.\s*CONTRACT VERSION\b[\s\S]*$/i, "\n");
+  t = t.replace(
+    /(?:^|\n)\s*"?PAGE_3_(?:SUGGESTED_ADDITIONAL_GEOFENCE_TYPES|ADDITIONAL_TARGETING_NOTES|AGE_RANGE|GENDER|MIN_HOUSEHOLD_INCOME)"?\s*[:=][^\n]*(?:\n(?!\s*"?PAGE_3_)[^\n]*)*/gi,
+    "\n",
+  );
+  return t
+    .split("\n")
+    .filter((line) => !MEDIA_BUY_LINE.test(line))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
 
 /** Strip duration labels so talent never says "twelve seconds" / "forty seconds". */
 export function spokenOnly(text: string): string {
-  return text
+  return stripMediaBuy(text)
     .split("\n")
     .map((line) => {
       const trimmed = line.trim();
@@ -40,9 +58,11 @@ export function extractProductScript(brief: string, productId: ProductId): strin
   const parsed = parseAudiencePaste(text);
   const fromProfile = spokenOnly(scriptForProduct(parsed, productId, ""));
   if (fromProfile) return fromProfile;
-  if (productId === "video-40") return labeledSection(text, 40) || spokenOnly(text);
-  if (productId === "video-20") return labeledSection(text, 20) || spokenOnly(text);
-  if (productId === "video-12") return labeledSection(text, 12) || spokenOnly(text);
+  const labeled = productId === "video-40" ? labeledSection(text, 40) : productId === "video-20" ? labeledSection(text, 20) : labeledSection(text, 12);
+  if (labeled) return labeled;
+  if (/\b(PAGE_3_|BUSINESS INFO|AD CONCEPTS|CONTRACT VERSION|geofenc)\b/i.test(text)) {
+    return "";
+  }
   return spokenOnly(text);
 }
 

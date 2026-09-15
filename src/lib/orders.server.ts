@@ -530,7 +530,7 @@ export async function createOrdersFromProfile(raw: string, email: string): Promi
   const city = parsed.city;
   const state = parsed.state;
   if (!city || !state) {
-    throw new Error("Profile needs a city and state (Business Address or PAGE_3_PRIMARY_RETAIL_ADDRESS).");
+    throw new Error("Profile needs a city and state (Business Address in the briefing).");
   }
   const phone = parsed.phone || "See website";
   const tone: Tone = category === "spa" || category === "salon" ? "premium" : "trustworthy";
