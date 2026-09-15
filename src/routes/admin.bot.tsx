@@ -37,9 +37,13 @@ function BotPlaybookPage() {
   const data = Route.useLoaderData();
   const router = useRouter();
   const p = data.profile;
+  const intake = data.intake;
   const [busy, setBusy] = useState(false);
   const [tickNote, setTickNote] = useState("");
-  const profileText = `Name: ${p.name}\nTitle: ${p.title}\nJob: ${p.job}\n\n${p.description}`;
+  const floorText = `Name: ${p.name}\nTitle: ${p.title}\nJob: ${p.job}\n\n${p.description}`;
+  const intakeText = intake
+    ? `Name: ${intake.name}\nTitle: ${intake.title}\nJob: ${intake.job}\n\n${intake.description}`
+    : "";
 
   return (
     <div className="min-h-dvh">
@@ -47,7 +51,7 @@ function BotPlaybookPage() {
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
           <div className="flex items-center gap-2">
             <Mark className="h-6" />
-            <span className="font-display text-lg">Grok Bot floor</span>
+            <span className="font-display text-lg">Grok Bot</span>
           </div>
           <Link to="/admin" className="text-sm text-muted hover:underline">
             Queue
@@ -56,9 +60,9 @@ function BotPlaybookPage() {
       </header>
       <main className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
         <p className="text-sm text-muted">
-          Create one Bot in the Grok Bot app. Paste the profile, send the first message, then save the routine. The
-          droplet already auto-QCs and remakes a hard fail once. The Bot is the ears: it watches the master for
-          pronunciation and script, then Pass QC. It never emails the customer.
+          Two Bots. <strong className="text-fg">MYA</strong> takes a pasted audience profile and starts one 20s ad.
+          <strong className="text-fg"> MYA Floor</strong> watches finished takes and Pass QC. Neither emails the
+          customer.
         </p>
 
         <ol className="mt-6 list-decimal space-y-2 pl-5 text-sm">
@@ -67,12 +71,12 @@ function BotPlaybookPage() {
             <a className="text-primary underline" href="https://x.ai/bot" target="_blank" rel="noreferrer">
               x.ai/bot
             </a>
-            .
+            . SuperGrok Heavy / Plus.
           </li>
-          <li>New → Create new agent. Name it {p.name}.</li>
-          <li>Bot actions → Edit Profile. Paste the profile below.</li>
-          <li>Send the first message. Take over once for the operator password.</li>
-          <li>Ask it to save the routine below. Time zone America/Phoenix.</li>
+          <li>New → Create new agent. Make the intake bot first, named MYA.</li>
+          <li>Bot actions → Edit Profile. Paste the intake profile. Put the operator token in that Bot’s notes.</li>
+          <li>Send the intake first message. Next paste is an audience profile — it will POST and generate.</li>
+          <li>Optional second Bot: MYA Floor, for watching masters. Take over once for the admin password.</li>
         </ol>
 
         {data.work ? (
@@ -111,9 +115,11 @@ function BotPlaybookPage() {
           {tickNote ? <p className="mt-2 text-sm text-muted">{tickNote}</p> : null}
         </div>
 
-        <CopyBlock label="Profile" text={profileText} />
-        <CopyBlock label="First message" text={p.firstMessage} />
-        <CopyBlock label="Routine" text={p.routine} />
+        <CopyBlock label="Intake profile — MYA" text={intakeText} />
+        <CopyBlock label="Intake first message" text={intake?.firstMessage ?? ""} />
+        <CopyBlock label="Floor profile — MYA Floor" text={floorText} />
+        <CopyBlock label="Floor first message" text={p.firstMessage} />
+        <CopyBlock label="Floor routine" text={p.routine} />
       </main>
     </div>
   );
