@@ -46,7 +46,7 @@ import {
   tokenMatches,
 } from "./operator-auth.server";
 import { env, isWorkspacePreview } from "./env.server";
-import { GROK_BOT_PROFILE, nextFloorWork, runBotTick } from "./floor.server";
+import { GROK_BOT_PROFILE, GROK_INTAKE_PROFILE, nextFloorWork, runBotTick } from "./floor.server";
 import { apiLimitSnapshot } from "./xai-limits.server";
 
 function requireAdmin() {
@@ -103,6 +103,7 @@ export const adminBotPlaybook = createServerFn({ method: "GET" }).handler(async 
   requireAdmin();
   return {
     profile: GROK_BOT_PROFILE,
+    intake: GROK_INTAKE_PROFILE,
     work: await nextFloorWork(),
   };
 });

@@ -7,9 +7,34 @@ import {
   tickGeneration,
   type GenerationJob,
 } from "./generate-ad.server";
-import { appendEvent, claimOrder, getOrder, listOrders } from "./orders.server";
+import { operatorEmail } from "./operator-auth.server";
+import {
+  appendEvent,
+  claimOrder,
+  createOrdersFromProfile,
+  getOrder,
+  listOrders,
+} from "./orders.server";
+import { estimateJobCost } from "./xai-cost";
 
 export const MAX_FLOOR_REMAKES = 1;
+
+export const GROK_INTAKE_PROFILE = {
+  name: "MYA",
+  title: "Audience profile → 20s ad",
+  job: "Turn a pasted audience profile into a 20-second MakeYourAd spot.",
+  description: [
+    "You make 20-second video ads for MakeYourAd.",
+    "The human pastes an audience profile (GPT briefing, PAGE_3 JSON, Voiceover 25–30s script, camera-facing script). That paste is the brief. Do not rewrite the spoken copy. Do not invent a business.",
+    "Call the MakeYourAd API. Do not drive the admin UI unless the API fails.",
+    "POST https://mya.geotargetus.dev/api/operator/bot/jobs with Authorization: Bearer <the operator token already in your notes>. JSON body: {\"profile\":\"<the entire paste>\",\"generate\":true}. Optional: \"email\" (delivery), \"direction\" (one-line visual change).",
+    "Only 20-second spots. Never start 12s or 40s. Never send a delivery email. Never refund. Never remake unless the human asks.",
+    "Reply with: business name, admin URL, generate cost (~$3.84 for one take: 2K still $0.08 + 15s 1080p $3.76). Then GET https://mya.geotargetus.dev/api/operator/bot/jobs/<orderId> every couple of minutes until status is done or error. Post a one-line result with the admin URL. If generate is already running, do not POST again.",
+    "If the profile is missing Voiceover 25–30s, city/state, or business name, ask for those — do not guess.",
+  ].join(" "),
+  firstMessage:
+    "You are MYA. When I paste an audience profile, POST it to https://mya.geotargetus.dev/api/operator/bot/jobs with generate:true and the operator Bearer token from your notes. Start one 20s ad. Give me the admin link and wait for the take. Never send the customer email.",
+};
 
 export const GROK_BOT_PROFILE = {
   name: "MYA Floor",
@@ -114,4 +139,50 @@ export async function runBotTick(): Promise<{ work: BotWork | null; did: string 
     }
   }
   return { work, did: `${order.business_name} is waiting for you to watch the master.` };
+}
+
+export async function intakeFromProfile(raw: string, opts: { email?: string; generate?: boolean; direction?: string } = {}) {
+  const profile = raw.trim();
+  if (profile.length < 40) throw new Error("Paste the full audience profile.");
+  const email = (opts.email || operatorEmail()).trim();
+  const [order] = await createOrdersFromProfile(profile, email);
+  await claimOrder(order.id, "bot");
+  await appendEvent(order.id, "generate", "Grok Bot intake. 20s generate queued.", "bot");
+  let job = await loadGeneration(order.id);
+  if (opts.generate !== false) {
+    const result = await tickGeneration(order.id, {
+      action: "start",
+      direction: opts.direction?.trim() || undefined,
+    });
+    job = result.job;
+  }
+  return summarizeJob(order.id, job);
+}
+
+export async function summarizeJob(orderId: string, job?: GenerationJob | null) {
+  const order = await getOrder(orderId);
+  if (!order) throw new Error("Order not found");
+  const loaded = job ?? (await loadGeneration(orderId));
+  const slot = loaded?.slots[0] ?? null;
+  const cost = loaded ? estimateJobCost(loaded) : { totalCents: 0, stills: 0, videos: 0 };
+  return {
+    orderId: order.id,
+    businessName: order.business_name,
+    product: order.product,
+    status: order.status,
+    city: order.city,
+    state: order.state,
+    email: order.email,
+    jobStatus: loaded?.status ?? null,
+    error: loaded?.error ?? null,
+    slot: slot
+      ? { id: slot.id, label: slot.label, status: slot.status, qc: slot.qc ?? null }
+      : null,
+    stillUrl: slot?.stillUrl ?? null,
+    videoUrl: slot?.videoUrl ?? loaded?.masterUrl ?? null,
+    costCents: cost.totalCents,
+    stills: cost.stills,
+    videos: cost.videos,
+    adminUrl: `${publicOrigin()}/admin/${order.id}`,
+  };
 }

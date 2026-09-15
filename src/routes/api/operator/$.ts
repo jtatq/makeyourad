@@ -23,7 +23,7 @@ import {
   tickGeneration,
 } from "@/lib/generate-ad.server";
 import { requestIsImagineWorker, requestIsOperator, requestOrigin, unauthorizedJson } from "@/lib/operator-auth.server";
-import { GROK_BOT_PROFILE, nextFloorWork, runBotTick } from "@/lib/floor.server";
+import { GROK_BOT_PROFILE, GROK_INTAKE_PROFILE, intakeFromProfile, nextFloorWork, runBotTick, summarizeJob } from "@/lib/floor.server";
 
 export const Route = createFileRoute("/api/operator/$")({
   server: {
@@ -81,7 +81,8 @@ async function handle(request: Request, splat: string, method: "GET" | "POST") {
     if (parts[0] === "bot") {
       if (method === "GET" && (parts[1] === "playbook" || !parts[1])) {
         return Response.json({
-          profile: GROK_BOT_PROFILE,
+          intake: GROK_INTAKE_PROFILE,
+          floor: GROK_BOT_PROFILE,
           work: await nextFloorWork(),
         });
       }
@@ -90,6 +91,19 @@ async function handle(request: Request, splat: string, method: "GET" | "POST") {
       }
       if (method === "POST" && parts[1] === "tick") {
         return Response.json(await runBotTick());
+      }
+      if (method === "POST" && (parts[1] === "jobs" || parts[1] === "intake") && !parts[2]) {
+        const body = await readJson(request);
+        const profile = String(body.profile ?? body.raw ?? body.brief ?? "");
+        const result = await intakeFromProfile(profile, {
+          email: typeof body.email === "string" ? body.email : undefined,
+          generate: body.generate !== false,
+          direction: typeof body.direction === "string" ? body.direction : undefined,
+        });
+        return Response.json(result);
+      }
+      if (method === "GET" && parts[1] === "jobs" && parts[2]) {
+        return Response.json(await summarizeJob(parts[2]));
       }
       return Response.json({ error: "Not found" }, { status: 404 });
     }
