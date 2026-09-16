@@ -1,11 +1,10 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import sharp from "sharp";
-import { CATEGORIES, CATEGORY_IDS } from "./categories";
+import { categoryLabel } from "./categories";
 import { US_STATES } from "./intake";
 import { TONES, type Tone } from "./products";
 import {
-  CATEGORY_ID_SET,
   isTone,
   type WebsiteAsset,
   type WebsiteProfile,
@@ -411,12 +410,12 @@ function extractCityState(text: string): { city: string; state: string } {
 
 function inferCategory(text: string): string {
   const hay = text.toLowerCase();
-  let best = { id: "general_contractor", n: 0 };
+  let best = { id: "", n: 0 };
   for (const row of CATEGORY_KEYWORDS) {
     const n = row.words.reduce((acc, w) => acc + (hay.includes(w) ? 1 : 0), 0);
     if (n > best.n) best = { id: row.id, n };
   }
-  return best.id;
+  return best.n > 0 ? best.id : "";
 }
 
 function cleanName(raw: string): string {
@@ -560,7 +559,7 @@ async function enrichWithGrok(pageUrl: string, h: Heuristic): Promise<GrokFields
       {
         role: "system",
         content:
-          "Extract a local-business ad profile from a website. Use only facts on the page. Empty string if unknown. brief is 2–5 sentences the business would want in a local ad: what they do, who they serve, a proof point, and a CTA. Plain language, no agency jargon.",
+          "Extract a local-business ad profile from a website. Use only facts on the page. Empty string if unknown. category is whatever they actually are (day spa, bakery, electrician) — do not force a preset industry list. brief is 2–5 sentences the business would want in a local ad: what they do, who they serve, a proof point, and a CTA. Plain language, no agency jargon.",
       },
       {
         role: "user",
@@ -604,7 +603,7 @@ async function enrichWithGrok(pageUrl: string, h: Heuristic): Promise<GrokFields
           properties: {
             businessName: { type: "string" },
             tagline: { type: "string" },
-            category: { type: "string", enum: CATEGORY_IDS },
+            category: { type: "string" },
             city: { type: "string" },
             state: { type: "string" },
             phone: { type: "string" },
@@ -644,7 +643,7 @@ async function enrichWithGrok(pageUrl: string, h: Heuristic): Promise<GrokFields
 
 function mergeProfile(pageUrl: string, h: Heuristic, grok: GrokFields | null): WebsiteProfile {
   const state = normalizeState(grok?.state || h.state);
-  const category = grok?.category && CATEGORY_ID_SET.has(grok.category) ? grok.category : h.category;
+  const category = clip(grok?.category || h.category || "local business", 80);
   const tone: Tone = grok && isTone(grok.tone) ? grok.tone : "trustworthy";
   const name = clip(grok?.businessName || h.businessName, 80);
   const services = (grok?.services ?? []).map((s) => clip(s, 80)).filter(Boolean).slice(0, 12);
@@ -672,7 +671,7 @@ function mergeProfile(pageUrl: string, h: Heuristic, grok: GrokFields | null): W
     state,
     phone: clip(grok?.phone || h.phone, 32),
     email: clip(grok?.email || h.email, 120),
-    brief: brief.length >= 12 ? brief : clip(`${name} — local ${CATEGORIES.find((c) => c.id === category)?.label ?? "business"}. Call to book.`, 1200),
+    brief: brief.length >= 12 ? brief : clip(`${name} — local ${categoryLabel(category)}. Call to book.`, 1200),
     tone,
   };
 }

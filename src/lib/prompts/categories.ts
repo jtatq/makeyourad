@@ -1,4 +1,5 @@
 import type { Tone } from "../products";
+import { categoryLabel, getCategory } from "../categories";
 
 export type CategoryPack = {
   visualWorld: string;
@@ -12,7 +13,7 @@ const homeCta = "Call or tap to book. Same-day answers.";
 const healthCta = "New patients welcome. Call or tap to book.";
 const shopCta = "Stop in or order ahead. See you soon.";
 
-/** Editable per-category packs. Unknown ids fall back to `general_contractor`. */
+/** Editable per-category packs. Unknown trades use a generic pack from the briefing label. */
 export const CATEGORY_PACKS: Record<string, CategoryPack> = {
   hvac: {
     visualWorld:
@@ -594,6 +595,34 @@ export const CATEGORY_PACKS: Record<string, CategoryPack> = {
   },
 };
 
+export function genericPack(label: string): CategoryPack {
+  const trade = categoryLabel(label) || "local business";
+  return {
+    visualWorld: `Photoreal advertisement for a real ${trade}. Storefront, team, and work from the reference photos. Match this exact trade. Do not invent a different industry.`,
+    proof: "Show the real place and the real people. The spoken script is the product.",
+    cta: "Call or book today.",
+    hookLine: {
+      energetic: "Talking-head owner to camera. Speak the brief verbatim.",
+      trustworthy: "Talking-head owner to camera. Speak the brief verbatim.",
+      premium: "Talking-head owner to camera. Speak the brief verbatim.",
+      friendly: "Talking-head owner to camera. Speak the brief verbatim.",
+    },
+    bodyBeats: [
+      "Use the exact script from the brief. Do not write a new pitch.",
+      "Show the real shop, team, or work from the photos.",
+      "End on business name, city, and phone.",
+    ],
+  };
+}
+
 export function getCategoryPack(categoryId: string): CategoryPack {
-  return CATEGORY_PACKS[categoryId] ?? CATEGORY_PACKS.general_contractor;
+  if (CATEGORY_PACKS[categoryId]) return CATEGORY_PACKS[categoryId];
+  const known = getCategory(categoryId) || null;
+  if (known && CATEGORY_PACKS[known.id]) return CATEGORY_PACKS[known.id];
+  const byLabel = Object.keys(CATEGORY_PACKS).find((id) => {
+    const c = getCategory(id);
+    return c && categoryId.toLowerCase().includes(c.label.toLowerCase());
+  });
+  if (byLabel) return CATEGORY_PACKS[byLabel];
+  return genericPack(categoryId);
 }

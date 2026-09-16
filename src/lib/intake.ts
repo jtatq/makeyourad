@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { CATEGORY_IDS } from "./categories";
 import { PLATFORMS, PRODUCT_IDS, TONES } from "./products";
 import { websiteFactsSchema } from "./website-profile";
 
@@ -86,14 +85,12 @@ const assetSchema = z.object({
   kind: z.enum(["upload", "logo"]).optional(),
 });
 
-const categoryEnum = z.enum(CATEGORY_IDS as unknown as [string, ...string[]]);
-
 export const checkoutInputSchema = z.object({
   product: z.enum(PRODUCT_IDS),
   mascot: z.boolean(),
   mascotDescription: z.string().max(280).optional(),
   businessName: z.string().trim().min(2).max(80),
-  category: categoryEnum,
+  category: z.string().trim().min(2).max(80),
   city: z.string().trim().min(2).max(60),
   state: z.enum(US_STATES),
   website: z.string().trim().max(200).optional(),

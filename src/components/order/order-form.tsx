@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { WebsiteImport } from "@/components/order/website-import";
 import { Button } from "@/components/ui/button";
 import { Input, Label, NativeSelect, Textarea } from "@/components/ui/input";
-import { CATEGORIES } from "@/lib/categories";
+import { CATEGORIES, categoryLabel } from "@/lib/categories";
 import { fileToDataUrl } from "@/lib/compress-image";
 import { checkoutInputSchema, US_STATES } from "@/lib/intake";
 import { startCheckout } from "@/lib/checkout.functions";
@@ -33,7 +33,7 @@ export function OrderForm({ productId, initialSite }: { productId: ProductId; in
   const product = PRODUCTS[productId];
   const navigate = useNavigate();
   const [businessName, setBusinessName] = useState("");
-  const [category, setCategory] = useState("hvac");
+  const [category, setCategory] = useState("");
   const [city, setCity] = useState("");
   const [state, setState] = useState("AZ");
   const [website, setWebsite] = useState(initialSite ?? "");
@@ -197,7 +197,7 @@ export function OrderForm({ productId, initialSite }: { productId: ProductId; in
           onApply={({ url, profile, assets: pulled }) => {
             setWebsite(url);
             setBusinessName(profile.businessName);
-            setCategory(profile.category);
+            setCategory(categoryLabel(profile.category));
             if (profile.city) setCity(profile.city);
             if ((US_STATES as readonly string[]).includes(profile.state)) setState(profile.state);
             if (profile.phone) setPhone(profile.phone);
@@ -219,14 +219,20 @@ export function OrderForm({ productId, initialSite }: { productId: ProductId; in
               <Input id="biz" required value={businessName} onChange={(e) => setBusinessName(e.target.value)} />
             </div>
             <div>
-              <Label htmlFor="cat">Category</Label>
-              <NativeSelect id="cat" value={category} onChange={(e) => setCategory(e.target.value)}>
+              <Label htmlFor="cat">What they do</Label>
+              <Input
+                id="cat"
+                required
+                list="cat-options"
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                placeholder="Day spa, electrician, bakery…"
+              />
+              <datalist id="cat-options">
                 {CATEGORIES.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label}
-                  </option>
+                  <option key={c.id} value={c.label} />
                 ))}
-              </NativeSelect>
+              </datalist>
             </div>
             <div>
               <Label htmlFor="web">Website or social link</Label>

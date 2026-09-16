@@ -492,7 +492,7 @@ export async function applyAudienceProfile(orderId: string, raw: string): Promis
     [
       orderId,
       parsed.businessName ?? "",
-      parsed.categoryId ?? "",
+      parsed.categoryLabel || parsed.categoryId || "",
       parsed.city ?? "",
       parsed.state ?? "",
       parsed.website ?? "",
@@ -526,14 +526,17 @@ export async function createOrdersFromProfile(raw: string, email: string): Promi
           .replace(/\b\w/g, (c) => c.toUpperCase())
       : "");
   if (!businessName) throw new Error("Profile needs a business name (Business Name in the briefing).");
-  const category = parsed.categoryId || "spa";
+  const category = parsed.categoryLabel || parsed.categoryId || "local business";
   const city = parsed.city;
   const state = parsed.state;
   if (!city || !state) {
     throw new Error("Profile needs a city and state (Business Address in the briefing).");
   }
   const phone = parsed.phone || "See website";
-  const tone: Tone = category === "spa" || category === "salon" ? "premium" : "trustworthy";
+  const tone: Tone =
+    /spa|salon|premium|luxury|boutique/i.test(`${category} ${parsed.categoryLabel ?? ""}`)
+      ? "premium"
+      : "trustworthy";
   const created = await createOperatorOrder({
     product: "video-20",
     businessName,

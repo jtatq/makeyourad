@@ -55,5 +55,15 @@ export function getCategory(id: string): Category | undefined {
 }
 
 export function categoryLabel(id: string): string {
-  return getCategory(id)?.label ?? id;
+  if (!id.trim()) return "local business";
+  return getCategory(id)?.label ?? id.replace(/[_-]+/g, " ").trim();
+}
+
+/** Keep known pack ids when they match; otherwise store the briefing’s own trade. */
+export function normalizeCategory(raw: string | null | undefined): string {
+  const t = (raw ?? "").trim().slice(0, 80);
+  if (!t) return "local business";
+  const lower = t.toLowerCase();
+  const hit = CATEGORIES.find((c) => lower === c.id || lower === c.label.toLowerCase());
+  return hit ? hit.id : t;
 }
