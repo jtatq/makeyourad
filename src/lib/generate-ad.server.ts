@@ -316,6 +316,9 @@ function stillPrompt(packet: GenerationPacket, slot: GenerationPacket["recipe"][
     site?.services?.length ? `Services: ${site.services.slice(0, 6).join(", ")}` : "",
     site?.about ? `About: ${site.about.slice(0, 280)}` : "",
     `Use the real business. Do not invent a different company or a celebrity.`,
+    packet.assets.length
+      ? `Reference photos on this order (match face, shirt, van, and job site — do not invent): ${packet.assets.map((a) => `${a.kind}:${a.filename}`).join(", ")}.`
+      : "",
     `No watermarks, no agency slogans, no UI chrome.`,
     `Never say twelve seconds, twenty seconds, forty seconds, or any runtime.`,
     continuityLine(packet),
@@ -402,6 +405,11 @@ function imagineStillPrompt(
     if (line) parts.push(`They are saying, verbatim: "${line}".`);
   }
   if (slot.id === "mascot" && i.mascotDescription) parts.push(`Mascot: ${i.mascotDescription}`);
+  if (packet.assets.length) {
+    parts.push(
+      `Reference photos on this order (match face, shirt, van, and job site — do not invent): ${packet.assets.map((a) => `${a.kind}:${a.filename}`).join(", ")}.`,
+    );
+  }
   parts.push("Use the real business. No celebrity, no watermark, no UI chrome, no agency slogan.");
   parts.push("Do not mention geofences, grocery or retail anchors, household income, age ranges, pilates studios, golf communities, or any media-buy targeting.");
   return parts.join(" ");
@@ -440,20 +448,28 @@ function imagineMotionPrompt(
   ].join(" ");
 }
 
-async function referenceUri(orderId: string, preferLogo: boolean): Promise<string | null> {
+async function referenceUris(orderId: string, preferLogo: boolean): Promise<string[]> {
   const assets = await listAssets({ orderId });
   const usable = assets.filter((a) => a.kind === "logo" || a.kind === "upload");
   const ordered = preferLogo
     ? [...usable.filter((a) => a.kind === "logo"), ...usable.filter((a) => a.kind !== "logo")]
     : [...usable.filter((a) => a.kind !== "logo"), ...usable.filter((a) => a.kind === "logo")];
+  const out: string[] = [];
   for (const a of ordered) {
-    if (a.external_url?.startsWith("http") && !a.external_url.includes("127.0.0.1")) return a.external_url;
-    if (a.data_url && a.data_url.length < MAX_DATA_URI && a.data_url.startsWith("data:")) return a.data_url;
+    let uri: string | null = null;
+    if (a.external_url?.startsWith("http") && !a.external_url.includes("127.0.0.1")) uri = a.external_url;
+    else if (a.data_url && a.data_url.length < MAX_DATA_URI && a.data_url.startsWith("data:")) uri = a.data_url;
+    if (uri) out.push(uri);
+    if (out.length >= 8) break;
   }
-  return null;
+  return out;
 }
 
-async function generateStill(prompt: string, ref: string | null): Promise<string> {
+function imageRef(url: string) {
+  return { url, type: "image_url" };
+}
+
+async function generateStill(prompt: string, refs: string[]): Promise<string> {
   const payload: Record<string, unknown> = {
     model: IMAGE_MODEL,
     prompt,
@@ -461,14 +477,19 @@ async function generateStill(prompt: string, ref: string | null): Promise<string
     aspect_ratio: "9:16",
     resolution: "2k",
   };
-  const path = ref ? "/images/edits" : "/images/generations";
-  if (ref) payload.image = { url: ref, type: "image_url" };
+  const path = refs.length ? "/images/edits" : "/images/generations";
+  if (refs.length === 1) payload.image = imageRef(refs[0]);
+  if (refs.length > 1) payload.image = refs.map(imageRef);
   let res = await xaiFetch(path, { method: "POST", body: JSON.stringify(payload) });
   if (!res.ok && payload.aspect_ratio) {
     delete payload.aspect_ratio;
     res = await xaiFetch(path, { method: "POST", body: JSON.stringify(payload) });
   }
-  if (!res.ok && ref) {
+  if (!res.ok && refs.length > 1) {
+    payload.image = imageRef(refs[0]);
+    res = await xaiFetch(path, { method: "POST", body: JSON.stringify(payload) });
+  }
+  if (!res.ok && refs.length) {
     delete payload.image;
     res = await xaiFetch("/images/generations", { method: "POST", body: JSON.stringify(payload) });
   }
@@ -1076,7 +1097,7 @@ async function referencePayload(orderId: string, origin: string): Promise<Imagin
   const assets = await listAssets({ orderId });
   const usable = assets.filter((a) => a.kind === "logo" || a.kind === "upload");
   const refs: ImagineWork["references"] = [];
-  for (const a of usable.slice(0, 3)) {
+  for (const a of usable.slice(0, 8)) {
     const url =
       a.external_url && /^https?:\/\//.test(a.external_url) && !a.external_url.includes("127.0.0.1")
         ? a.external_url
@@ -1348,10 +1369,10 @@ async function tickGenerationLocked(
       slot.status = "still";
       slot.claimedAt = new Date().toISOString();
       await saveGeneration(orderId, job);
-      const ref = await referenceUri(orderId, slot.id === "end_card" || slot.id === "static");
-      const url = await generateStill(slot.stillPrompt || stillPrompt(packet, recipeSlot, ratio), ref);
+      const refs = await referenceUris(orderId, slot.id === "end_card" || slot.id === "static");
+      const url = await generateStill(slot.stillPrompt || stillPrompt(packet, recipeSlot, ratio), refs);
       slot.stillUrl = url;
-      job.cost = addImage(job.cost ?? emptyCost(), Boolean(ref));
+      job.cost = addImage(job.cost ?? emptyCost(), refs.length > 0);
       const stillAst = await attachGen(orderId, `${slot.id}-gen.jpg`, url, "image/jpeg", slot.duration ? "still" : "delivery");
       trackAsset(slot, stillAst.id);
       if (!slot.duration) {

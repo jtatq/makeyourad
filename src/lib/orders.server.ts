@@ -14,6 +14,11 @@ import {
   signedFileUrl,
 } from "./operator-auth.server";
 import { spokenOnly } from "./script";
+import {
+  MAX_BOT_REFERENCES,
+  materializeReference,
+  type ReferenceInput,
+} from "./operator-refs";
 import { PRODUCTS, priceCentsFor, type OrderStatus, type Platform, type ProductId, type Tone } from "./products";
 import { buildPacket, type GenerationPacket, type IntakeForPrompt } from "./prompts/compiler";
 import type { WebsiteFacts } from "./website-profile";
@@ -550,6 +555,117 @@ export async function createOrdersFromProfile(raw: string, email: string): Promi
     tone,
   });
   return [created];
+}
+
+export function isReferenceKind(kind: string): boolean {
+  return kind === "upload" || kind === "logo";
+}
+
+export async function listReferenceAssets(orderId: string): Promise<AssetRow[]> {
+  return (await listAssets({ orderId })).filter((a) => isReferenceKind(a.kind));
+}
+
+async function insertReferenceAsset(opts: {
+  orderId?: string | null;
+  filename: string;
+  mime: string;
+  kind: "upload" | "logo";
+  dataUrl: string | null;
+  externalUrl: string | null;
+}): Promise<AssetRow> {
+  const sql = await getSql();
+  const id = makeId("ast");
+  await sql.query(
+    `insert into order_assets (id, order_id, kind, filename, mime, data_url, external_url)
+     values ($1,$2,$3,$4,$5,$6,$7)`,
+    [id, opts.orderId ?? null, opts.kind, opts.filename, opts.mime, opts.dataUrl, opts.externalUrl],
+  );
+  const row = await getAsset(id);
+  if (!row) throw new Error("Reference upload failed");
+  return row;
+}
+
+/** Store operator photos without an order yet. Returns assets that can be attached by id or signed /api/files URL. */
+export async function storeOperatorUploads(files: ReferenceInput[]): Promise<AssetRow[]> {
+  if (files.length === 0) throw new Error("Attach at least one photo.");
+  if (files.length > MAX_BOT_REFERENCES) {
+    throw new Error(`At most ${MAX_BOT_REFERENCES} reference photos.`);
+  }
+  const out: AssetRow[] = [];
+  for (const file of files) {
+    const ready = await materializeReference(file);
+    if (ready.assetId) {
+      const existing = await getAsset(ready.assetId);
+      if (!existing) throw new Error(`Unknown upload ${ready.assetId}`);
+      out.push(existing);
+      continue;
+    }
+    out.push(
+      await insertReferenceAsset({
+        filename: ready.filename,
+        mime: ready.mime,
+        kind: ready.kind,
+        dataUrl: ready.dataUrl,
+        externalUrl: ready.externalUrl,
+      }),
+    );
+  }
+  return out;
+}
+
+/** Attach owner / job-site photos as checkout-style upload/logo assets used by generate and remake. */
+export async function attachReferencePhotos(
+  orderId: string,
+  files: ReferenceInput[],
+  actor = "operator",
+): Promise<AssetRow[]> {
+  const order = await getOrder(orderId);
+  if (!order) throw new Error("Order not found");
+  if (files.length === 0) throw new Error("Attach at least one photo.");
+  const existing = await listReferenceAssets(orderId);
+  const sql = await getSql();
+  const attached: AssetRow[] = [];
+  let added = 0;
+  for (const file of files) {
+    const ready = await materializeReference(file);
+    if (ready.assetId) {
+      const prior = await getAsset(ready.assetId);
+      if (!prior) throw new Error(`Unknown upload ${ready.assetId}`);
+      if (!isReferenceKind(prior.kind)) {
+        throw new Error(`${prior.filename} is not a reference photo.`);
+      }
+      if (prior.order_id && prior.order_id !== orderId) {
+        throw new Error("That upload is already on another order.");
+      }
+      if (!prior.order_id) {
+        if (existing.length + added >= MAX_BOT_REFERENCES) {
+          throw new Error(`At most ${MAX_BOT_REFERENCES} reference photos per order.`);
+        }
+        await sql.query(`update order_assets set order_id = $1 where id = $2`, [orderId, prior.id]);
+        added += 1;
+      }
+      const next = await getAsset(prior.id);
+      if (next) attached.push(next);
+      continue;
+    }
+    if (existing.length + added >= MAX_BOT_REFERENCES) {
+      throw new Error(`At most ${MAX_BOT_REFERENCES} reference photos per order.`);
+    }
+    attached.push(
+      await insertReferenceAsset({
+        orderId,
+        filename: ready.filename,
+        mime: ready.mime,
+        kind: ready.kind,
+        dataUrl: ready.dataUrl,
+        externalUrl: ready.externalUrl,
+      }),
+    );
+    added += 1;
+  }
+  await sql.query(`update orders set updated_at = now() where id = $1`, [orderId]);
+  await appendEvent(orderId, "attach", `Attached ${attached.length} reference photo(s) for generation.`, actor);
+  return attached;
 }
 
 export async function attachFiles(
