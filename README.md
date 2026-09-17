@@ -37,7 +37,8 @@ All routes require `Authorization: Bearer $OPERATOR_TOKEN`.
 - `GET /api/operator/imagine/pending` — running Imagine jobs
 - `GET /api/operator/imagine/next` — claim the next still or clip
 - `POST /api/operator/imagine/complete` body `{ "orderId", "slotId", "kind": "still"|"video", "filename", "mime", "dataUrl" }`
-- `POST /api/operator/orders/:id/attach` body `{ "files": [{ "filename", "url" }] }`
+- `POST /api/operator/orders/:id/attach` body `{ "files": [{ "filename", "url" }] }` — finished delivery files (QC)
+- `POST /api/operator/orders/:id/references` — owner / job-site photos for generate (see below)
 - `POST /api/operator/orders/:id/qc` body `{ "watched": true, "namesPhoneCityCorrect": true, "noArtifacts": true }`
 - `POST /api/operator/orders/:id/deliver`
 - `POST /api/operator/orders/:id/flag` body `{ "note": "..." }`
@@ -47,3 +48,61 @@ All routes require `Authorization: Bearer $OPERATOR_TOKEN`.
 QC is required before delivery. Prompt templates live in `src/lib/prompts/`.
 
 Stripe webhook: `POST /api/stripe/webhook`.
+
+## Operator bot jobs (20s spots + reference photos)
+
+Grok Bot / operators create a 20s job with `POST /api/operator/bot/jobs`. Generation uses the same `upload` / `logo` assets as customer checkout. **Send the real owner and job-site photos with the job** — do not host them on pastebins. Remakes keep those photos on the order.
+
+`GET /api/operator/bot/jobs/:id` (and the create/remake responses) include a `references` array so you can confirm the photos landed.
+
+### Upload then attach (recommended if the bot already has files)
+
+```bash
+# 1) Store photos on this app. Returns signed /api/files URLs.
+curl -sS -X POST "$ORIGIN/api/operator/uploads" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" \
+  -F "files=@alan-owner.jpg" \
+  -F "files=@pool-1.jpg" \
+  -F "files=@pool-3.jpg"
+
+# 2) Create the 20s job and attach those URLs (or the returned asset ids).
+curl -sS -X POST "$ORIGIN/api/operator/bot/jobs" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "profile": "<the entire audience paste>",
+    "generate": true,
+    "references": [
+      {"filename":"alan-owner.jpg","url":"https://mya.geotargetus.dev/api/files/ast_…?exp=…&sig=…"},
+      {"filename":"pool-1.jpg","assetId":"ast_…"},
+      {"filename":"pool-3.jpg","assetId":"ast_…"}
+    ]
+  }'
+```
+
+### Multipart in one request
+
+```bash
+curl -sS -X POST "$ORIGIN/api/operator/bot/jobs" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" \
+  -F "profile=<the entire audience paste>" \
+  -F "generate=true" \
+  -F "references=@alan-owner.jpg" \
+  -F "references=@pool-1.jpg" \
+  -F "references=@pool-3.jpg"
+```
+
+JSON may also send `references: [{ "filename", "mime", "dataUrl", "kind": "upload"|"logo" }]` — same shape as checkout photos.
+
+### Remake (reuses existing photos)
+
+```bash
+curl -sS -X POST "$ORIGIN/api/operator/bot/jobs/$ORDER_ID/remake" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"direction":"Match Alan'\''s face and the real pool from the attached photos.","generate":true}'
+```
+
+Optional extra photos on remake: same `references` field or multipart files. Add photos to an existing job without remaking: `POST /api/operator/bot/jobs/:id/references` or `POST /api/operator/orders/:id/references`.
+
+`POST /api/operator/orders/:id/attach` is still for **finished delivery files**, not owner/job-site references.

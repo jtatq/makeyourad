@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { sendSlaDigest } from "@/lib/email.server";
 import {
   attachFiles,
+  attachReferencePhotos,
   claimOrder,
   deliverOrder,
   flagOrder,
@@ -15,6 +16,7 @@ import {
   refundOrder,
   remakeOrder,
   slaSnapshot,
+  storeOperatorUploads,
 } from "@/lib/orders.server";
 import {
   claimNextImagineWork,
@@ -22,8 +24,23 @@ import {
   listImagineQueue,
   tickGeneration,
 } from "@/lib/generate-ad.server";
-import { requestIsImagineWorker, requestIsOperator, requestOrigin, unauthorizedJson } from "@/lib/operator-auth.server";
-import { GROK_BOT_PROFILE, GROK_INTAKE_PROFILE, intakeFromProfile, nextFloorWork, runBotTick, summarizeJob } from "@/lib/floor.server";
+import {
+  requestIsImagineWorker,
+  requestIsOperator,
+  requestOrigin,
+  signedFileUrl,
+  unauthorizedJson,
+} from "@/lib/operator-auth.server";
+import {
+  GROK_BOT_PROFILE,
+  GROK_INTAKE_PROFILE,
+  intakeFromProfile,
+  nextFloorWork,
+  remakeFromBot,
+  runBotTick,
+  summarizeJob,
+} from "@/lib/floor.server";
+import { collectReferencesFromBody, readOperatorJobRequest } from "@/lib/operator-refs";
 
 export const Route = createFileRoute("/api/operator/$")({
   server: {
@@ -93,19 +110,54 @@ async function handle(request: Request, splat: string, method: "GET" | "POST") {
         return Response.json(await runBotTick());
       }
       if (method === "POST" && (parts[1] === "jobs" || parts[1] === "intake") && !parts[2]) {
-        const body = await readJson(request);
-        const profile = String(body.profile ?? body.raw ?? body.brief ?? "");
-        const result = await intakeFromProfile(profile, {
-          email: typeof body.email === "string" ? body.email : undefined,
-          generate: body.generate !== false,
-          direction: typeof body.direction === "string" ? body.direction : undefined,
+        const body = await readOperatorJobRequest(request);
+        const result = await intakeFromProfile(body.profile, {
+          email: body.email,
+          generate: body.generate,
+          direction: body.direction,
+          references: body.references,
         });
         return Response.json(result);
       }
-      if (method === "GET" && parts[1] === "jobs" && parts[2]) {
+      if (method === "GET" && parts[1] === "jobs" && parts[2] && !parts[3]) {
+        return Response.json(await summarizeJob(parts[2]));
+      }
+      if (method === "POST" && parts[1] === "jobs" && parts[2] && parts[3] === "remake") {
+        const body = await readOperatorJobRequest(request);
+        return Response.json(
+          await remakeFromBot(parts[2], {
+            direction: body.direction,
+            generate: body.generate,
+            references: body.references,
+          }),
+        );
+      }
+      if (method === "POST" && parts[1] === "jobs" && parts[2] && parts[3] === "references") {
+        const body = await readOperatorJobRequest(request);
+        if (body.references.length === 0) {
+          return Response.json({ error: "Attach at least one photo." }, { status: 400 });
+        }
+        await attachReferencePhotos(parts[2], body.references, "bot");
         return Response.json(await summarizeJob(parts[2]));
       }
       return Response.json({ error: "Not found" }, { status: 404 });
+    }
+    if (method === "POST" && parts[0] === "uploads" && parts.length === 1) {
+      const body = await readOperatorJobRequest(request);
+      if (body.references.length === 0) {
+        return Response.json({ error: "Attach at least one photo." }, { status: 400 });
+      }
+      const origin = requestOrigin(request);
+      const files = await storeOperatorUploads(body.references);
+      return Response.json({
+        files: files.map((a) => ({
+          id: a.id,
+          filename: a.filename,
+          mime: a.mime,
+          kind: a.kind,
+          url: signedFileUrl(origin, a.id, 7),
+        })),
+      });
     }
     if (method === "GET" && parts[0] === "sla") {
       await purgeSeedDemoOrders();
@@ -161,6 +213,19 @@ async function handle(request: Request, splat: string, method: "GET" | "POST") {
       if (method !== "POST") {
         return Response.json({ error: "Method not allowed" }, { status: 405 });
       }
+      const isMultipart = (request.headers.get("content-type") || "").includes("multipart/form-data");
+      if (isMultipart && (action === "references" || action === "remake")) {
+        const payload = await readOperatorJobRequest(request);
+        if (action === "references") {
+          if (payload.references.length === 0) {
+            return Response.json({ error: "Attach at least one photo." }, { status: 400 });
+          }
+          await attachReferencePhotos(id, payload.references);
+          return Response.json(await summarizeJob(id));
+        }
+        if (payload.references.length) await attachReferencePhotos(id, payload.references);
+        return Response.json({ order: await remakeOrder(id, payload.direction ?? null) });
+      }
       const body = await readJson(request);
       if (action === "claim") return Response.json({ order: await claimOrder(id) });
       if (action === "generate") {
@@ -177,6 +242,14 @@ async function handle(request: Request, splat: string, method: "GET" | "POST") {
             ? [{ filename: String(body.filename), url: body.url as string, mime: body.mime as string | undefined, dataUrl: body.dataUrl as string | undefined }]
             : [];
         return Response.json({ order: await attachFiles(id, files) });
+      }
+      if (action === "references") {
+        const refs = collectReferencesFromBody(body);
+        if (refs.length === 0) {
+          return Response.json({ error: "Attach at least one photo." }, { status: 400 });
+        }
+        await attachReferencePhotos(id, refs);
+        return Response.json(await summarizeJob(id));
       }
       if (action === "qc") {
         return Response.json({
@@ -196,7 +269,11 @@ async function handle(request: Request, splat: string, method: "GET" | "POST") {
         return Response.json({ order: await flagOrder(id, note) });
       }
       if (action === "remake") {
-        return Response.json({ order: await remakeOrder(id, (body.note as string) ?? null) });
+        const refs = collectReferencesFromBody(body);
+        if (refs.length) await attachReferencePhotos(id, refs);
+        return Response.json({
+          order: await remakeOrder(id, (body.note as string) ?? (body.direction as string) ?? null),
+        });
       }
       if (action === "refund") {
         return Response.json({ order: await refundOrder(id, (body.note as string) ?? null) });

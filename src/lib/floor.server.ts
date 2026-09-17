@@ -7,14 +7,18 @@ import {
   tickGeneration,
   type GenerationJob,
 } from "./generate-ad.server";
-import { operatorEmail } from "./operator-auth.server";
+import { operatorEmail, signedFileUrl } from "./operator-auth.server";
 import {
   appendEvent,
+  attachReferencePhotos,
   claimOrder,
   createOrdersFromProfile,
   getOrder,
   listOrders,
+  listReferenceAssets,
+  remakeOrder,
 } from "./orders.server";
+import type { ReferenceInput } from "./operator-refs";
 import { estimateJobCost } from "./xai-cost";
 
 export const MAX_FLOOR_REMAKES = 1;
@@ -27,13 +31,14 @@ export const GROK_INTAKE_PROFILE = {
     "You make 20-second video ads for MakeYourAd.",
     "The human pastes an audience profile (GPT briefing, PAGE_3 JSON, Voiceover 25–30s script, camera-facing script). That paste is the brief. Do not rewrite the spoken copy. Do not invent a business. Ignore geofences, retail anchors, income, age, and PAGE_3 targeting — those are not in the ad.",
     "Call the MakeYourAd API. Do not drive the admin UI unless the API fails.",
-    "POST https://mya.geotargetus.dev/api/operator/bot/jobs with Authorization: Bearer <the operator token already in your notes>. JSON body: {\"profile\":\"<the entire paste>\",\"generate\":true}. Optional: \"email\" (delivery), \"direction\" (one-line visual change).",
-    "Only 20-second spots. Never start 12s or 40s. Never send a delivery email. Never refund. Never remake unless the human asks.",
+    "POST https://mya.geotargetus.dev/api/operator/bot/jobs with Authorization: Bearer <the operator token already in your notes>. JSON body: {\"profile\":\"<the entire paste>\",\"generate\":true}. Optional: \"email\" (delivery), \"direction\" (one-line visual change), \"references\" (owner/job-site photos as data URLs or /api/files URLs from POST /api/operator/uploads). Multipart also works: profile text + references=@photo.jpg.",
+    "When the human attaches photos (owner headshot, van, pool, job site), you MUST send them as references. Do not invent faces, vans, or job sites. Upload files to this app — do not host them on pastebins.",
+    "Only 20-second spots. Never start 12s or 40s. Never send a delivery email. Never refund. Never remake unless the human asks. Remake with POST /api/operator/bot/jobs/<orderId>/remake — existing reference photos stay on the order.",
     "Reply with: business name, admin URL, generate cost (~$3.84 for one take: 2K still $0.08 + 15s 1080p $3.76). Then GET https://mya.geotargetus.dev/api/operator/bot/jobs/<orderId> every couple of minutes until status is done or error. Post a one-line result with the admin URL. If generate is already running, do not POST again.",
     "If the profile is missing Voiceover 25–30s, city/state, or business name, ask for those — do not guess.",
   ].join(" "),
   firstMessage:
-    "You are MYA. When I paste an audience profile, POST it to https://mya.geotargetus.dev/api/operator/bot/jobs with generate:true and the operator Bearer token from your notes. Start one 20s ad. Give me the admin link and wait for the take. Never send the customer email.",
+    "You are MYA. When I paste an audience profile, POST it to https://mya.geotargetus.dev/api/operator/bot/jobs with generate:true and the operator Bearer token from your notes. If I attach photos, upload them with the job (multipart references or POST /api/operator/uploads then attach the returned URLs). Start one 20s ad. Give me the admin link and wait for the take. Never send the customer email.",
 };
 
 export const GROK_BOT_PROFILE = {
@@ -141,11 +146,17 @@ export async function runBotTick(): Promise<{ work: BotWork | null; did: string 
   return { work, did: `${order.business_name} is waiting for you to watch the master.` };
 }
 
-export async function intakeFromProfile(raw: string, opts: { email?: string; generate?: boolean; direction?: string } = {}) {
+export async function intakeFromProfile(
+  raw: string,
+  opts: { email?: string; generate?: boolean; direction?: string; references?: ReferenceInput[] } = {},
+) {
   const profile = raw.trim();
   if (profile.length < 40) throw new Error("Paste the full audience profile.");
   const email = (opts.email || operatorEmail()).trim();
   const [order] = await createOrdersFromProfile(profile, email);
+  if (opts.references?.length) {
+    await attachReferencePhotos(order.id, opts.references, "bot");
+  }
   await claimOrder(order.id, "bot");
   await appendEvent(order.id, "generate", "Grok Bot intake. 20s generate queued.", "bot");
   let job = await loadGeneration(order.id);
@@ -159,12 +170,44 @@ export async function intakeFromProfile(raw: string, opts: { email?: string; gen
   return summarizeJob(order.id, job);
 }
 
+export async function remakeFromBot(
+  orderId: string,
+  opts: { direction?: string; generate?: boolean; references?: ReferenceInput[] } = {},
+) {
+  const order = await getOrder(orderId);
+  if (!order) throw new Error("Order not found");
+  if (opts.references?.length) {
+    await attachReferencePhotos(orderId, opts.references, "bot");
+  }
+  const note = opts.direction?.trim() || null;
+  await remakeOrder(orderId, note, "bot");
+  let job = await loadGeneration(orderId);
+  if (opts.generate !== false) {
+    const result = await tickGeneration(orderId, {
+      action: "start",
+      force: true,
+      direction: note || undefined,
+    });
+    job = result.job;
+  }
+  return summarizeJob(orderId, job);
+}
+
 export async function summarizeJob(orderId: string, job?: GenerationJob | null) {
   const order = await getOrder(orderId);
   if (!order) throw new Error("Order not found");
   const loaded = job ?? (await loadGeneration(orderId));
   const slot = loaded?.slots[0] ?? null;
   const cost = loaded ? estimateJobCost(loaded) : { totalCents: 0, stills: 0, videos: 0 };
+  const origin = publicOrigin();
+  const references = (await listReferenceAssets(order.id)).map((a) => ({
+    id: a.id,
+    filename: a.filename,
+    mime: a.mime,
+    kind: a.kind,
+    hasData: Boolean(a.data_url),
+    url: a.external_url && /^https?:\/\//.test(a.external_url) ? a.external_url : signedFileUrl(origin, a.id, 7),
+  }));
   return {
     orderId: order.id,
     businessName: order.business_name,
@@ -180,6 +223,7 @@ export async function summarizeJob(orderId: string, job?: GenerationJob | null) 
       : null,
     stillUrl: slot?.stillUrl ?? null,
     videoUrl: slot?.videoUrl ?? loaded?.masterUrl ?? null,
+    references,
     costCents: cost.totalCents,
     stills: cost.stills,
     videos: cost.videos,
