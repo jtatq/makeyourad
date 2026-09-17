@@ -22,6 +22,7 @@ TanStack Start, TypeScript, Tailwind, Postgres (Neon in production, embedded PGL
 | `ADMIN_PASSWORD` | optional | Alternate admin password if you do not want to type the operator token. |
 | `XAI_API_KEY` | production | xAI REST. Generate uses **grok-imagine-image-2.0** (2K) and **grok-imagine-video-1.5** (1080p) on the droplet. SuperGrok Imagine is fallback only if this is unset. |
 | `GENERATION_ENGINE` | optional | `xai` when a key is present (default). Set `imagine` to force the SuperGrok worker queue. |
+| `AUTO_GENERATE` | optional | Droplet (non-Vercel) defaults **on** when `XAI_API_KEY` is set. Set `0` to disable the background tick. On Vercel, set `1` to opt in (usually leave off). |
 | `DATABASE_URL` | production | Injected on deploy. Do not set in preview. |
 
 Never put secrets in client code.
@@ -34,6 +35,7 @@ All routes require `Authorization: Bearer $OPERATOR_TOKEN`.
 - `GET /api/operator/orders/:id`
 - `GET /api/operator/orders/:id/packet`
 - `POST /api/operator/orders/:id/generate` body `{ "action": "start" | "tick", "force": false }` — queues a SuperGrok Imagine job (or ticks the xAI REST path if `GENERATION_ENGINE=xai`)
+- `POST /api/operator/orders/:id/cancel` (aliases `/kill`, `/abort`) — stop a running generate so it cannot keep spending
 - `GET /api/operator/imagine/pending` — running Imagine jobs
 - `GET /api/operator/imagine/next` — claim the next still or clip
 - `POST /api/operator/imagine/complete` body `{ "orderId", "slotId", "kind": "still"|"video", "filename", "mime", "dataUrl" }`
@@ -104,5 +106,32 @@ curl -sS -X POST "$ORIGIN/api/operator/bot/jobs/$ORDER_ID/remake" \
 ```
 
 Optional extra photos on remake: same `references` field or multipart files. Add photos to an existing job without remaking: `POST /api/operator/bot/jobs/:id/references` or `POST /api/operator/orders/:id/references`.
+
+### Status, timeouts, and cancel
+
+`GET /api/operator/bot/jobs/:id` ticks a running xAI job (starts video after a leftover still, then polls). It returns:
+
+- `jobStatus`: `running` | `done` | `error` | `cancelled`
+- `phase`: `queued` | `still` | `video` | `done` | `error` | `cancelled`
+- `startedAt`, `updatedAt`
+- `videoStarted`: `true` once `/videos/generations` was accepted
+- `timedOut`: `true` when the job failed a watchdog (still handoff 4 min, video 18 min, job 20 min)
+- `error`: set on fail/cancel — do not keep polling as if it were running
+
+Stuck jobs no longer sit at `still` with `videoUrl: null` and no error. Either video starts in the same tick as the still, a later GET/worker tick starts it, or the job fails fast.
+
+```bash
+# Poll (also advances still → video and video poll)
+curl -sS "$ORIGIN/api/operator/bot/jobs/$ORDER_ID" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN"
+
+# Stop a hung generate. Aliases: /kill /abort
+curl -sS -X POST "$ORIGIN/api/operator/bot/jobs/$ORDER_ID/cancel" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"operator stop"}'
+```
+
+Expected transitions: `running` + `phase:still` → `running` + `phase:video` (`videoStarted:true`) → `done` (or `error` / `timedOut:true`). After cancel: `jobStatus:cancelled`, `error` set, further ticks no-op.
 
 `POST /api/operator/orders/:id/attach` is still for **finished delivery files**, not owner/job-site references.

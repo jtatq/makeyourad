@@ -20,6 +20,14 @@ import { PRODUCTS, type Tone } from "./products";
 import { stitchMasterFile } from "./stitch.server";
 import { classifyXaiPath, readLimitHeaders, recordXaiCall, runWithOrder } from "./xai-limits.server";
 import { addImage, addVideo, emptyCost, estimateJobCost, type CostTally } from "./xai-cost";
+import {
+  detectGenerationTimeout,
+  jobStopped,
+  markJobCancelled,
+  markJobFailed,
+  orderOpenForGeneratePump,
+  VIDEO_WAIT_MS,
+} from "./generation-progress";
 
 export type GenEngine = "imagine" | "xai";
 export type GenSlotStatus = "queued" | "still" | "video" | "done" | "error";
@@ -33,6 +41,7 @@ export type GenSlotState = {
   stillUrl?: string;
   videoUrl?: string;
   videoRequestId?: string;
+  videoStartedAt?: string;
   stillPrompt?: string;
   motionPrompt?: string;
   claimedAt?: string;
@@ -54,7 +63,7 @@ export type TimelineClip = {
 };
 
 export type GenerationJob = {
-  status: "idle" | "running" | "done" | "error";
+  status: "idle" | "running" | "done" | "error" | "cancelled";
   engine: GenEngine;
   startedAt: string;
   updatedAt: string;
@@ -95,6 +104,8 @@ const VIDEO_MODEL = "grok-imagine-video-1.5";
 const XAI = "https://api.x.ai/v1";
 const MAX_DATA_URI = 3_500_000;
 const CLAIM_MS = 8 * 60 * 1000;
+const XAI_GET_MS = 30_000;
+const XAI_POST_MS = 120_000;
 
 function apiKey(): string | null {
   return process.env.XAI_API_KEY?.trim() || null;
@@ -223,19 +234,113 @@ async function saveGeneration(orderId: string, job: GenerationJob) {
   ]);
 }
 
+function persistFailedJob(job: GenerationJob, message: string, slotId?: string): GenerationJob {
+  return markJobFailed(job, message, slotId) as GenerationJob;
+}
+
+export async function failTimedOutGeneration(orderId: string, message?: string): Promise<GenerationJob | null> {
+  const job = await loadGeneration(orderId);
+  if (!job || jobStopped(job.status)) return job;
+  const hit = detectGenerationTimeout(job);
+  if (!hit && !message) return job;
+  const next = persistFailedJob(job, message || hit?.message || "Generation timed out", hit?.slotId);
+  await saveGeneration(orderId, next);
+  await appendEvent(orderId, "generate", `Failed · ${next.error}`, "system");
+  return next;
+}
+
+export async function cancelGeneration(
+  orderId: string,
+  actor = "bot",
+  reason = "Cancelled by operator",
+): Promise<{ job: GenerationJob; order: OrderRow }> {
+  const order = await getOrder(orderId);
+  if (!order) throw new Error("Order not found");
+  const job = await loadGeneration(orderId);
+  if (!job) throw new Error("No generation in progress");
+  if (job.status === "done") throw new Error("Job already finished");
+  if (job.status === "cancelled") return { job, order };
+  const next = markJobCancelled(job, reason) as GenerationJob;
+  await saveGeneration(orderId, next);
+  await appendEvent(orderId, "generate", `Cancelled · ${reason}`, actor);
+  return { job: next, order: (await getOrder(orderId))! };
+}
+
+async function enqueueSlotVideo(
+  order: OrderRow,
+  job: GenerationJob,
+  slot: GenSlotState,
+  recipeSlot: GenerationPacket["recipe"]["slots"][number],
+  packet: GenerationPacket,
+): Promise<void> {
+  if (!slot.stillUrl) throw new Error("Missing still for video");
+  if (!slot.duration) {
+    slot.status = "done";
+    await qcAndFloor(order, job, slot);
+    return;
+  }
+  if (slot.videoRequestId) {
+    slot.status = "video";
+    return;
+  }
+  slot.status = "video";
+  slot.claimedAt = new Date().toISOString();
+  slot.videoStartedAt = slot.claimedAt;
+  slot.error = undefined;
+  await saveGeneration(order.id, job);
+  const vidId = await startVideo(
+    slot.motionPrompt ||
+      motionPrompt(
+        recipeSlot,
+        slot.duration,
+        order.tone,
+        order.city,
+        order.state,
+        spokenForSlot(packet, slot.id),
+      ),
+    slot.stillUrl,
+    slot.duration,
+  );
+  slot.videoRequestId = vidId;
+  slot.videoStartedAt = slot.videoStartedAt || new Date().toISOString();
+  job.cost = addVideo(job.cost ?? emptyCost(), slot.duration ?? 15);
+  await appendEvent(order.id, "generate", `Animating ${slot.label} (${slot.duration}s API take).`, "grok");
+}
+
 async function xaiFetch(path: string, init: RequestInit, attempt = 0): Promise<Response> {
   const key = apiKey();
   if (!key) throw new Error("AI is not available in this environment");
   const method = (init.method || "GET").toUpperCase();
   const started = Date.now();
-  const res = await fetch(`${XAI}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${key}`,
-      ...(init.body ? { "Content-Type": "application/json" } : {}),
-      ...(init.headers ?? {}),
-    },
-  });
+  const timeoutMs = method === "GET" ? XAI_GET_MS : XAI_POST_MS;
+  let res: Response;
+  try {
+    res = await fetch(`${XAI}${path}`, {
+      ...init,
+      signal: init.signal ?? AbortSignal.timeout(timeoutMs),
+      headers: {
+        Authorization: `Bearer ${key}`,
+        ...(init.body ? { "Content-Type": "application/json" } : {}),
+        ...(init.headers ?? {}),
+      },
+    });
+  } catch (err) {
+    const timedOut = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
+    recordXaiCall({
+      kind: classifyXaiPath(path, method),
+      path,
+      method,
+      status: 0,
+      ms: Date.now() - started,
+      retryAfter: null,
+      remaining: null,
+      limit: null,
+      reset: null,
+      error: timedOut ? `timeout ${Math.round(timeoutMs / 1000)}s` : "network",
+    });
+    if (timedOut) throw new Error(`xAI ${method} ${path} timed out after ${Math.round(timeoutMs / 1000)}s`);
+    throw err;
+  }
   const limits = readLimitHeaders(res);
   let error: string | null = null;
   if (!res.ok) error = `${res.status}`;
@@ -682,6 +787,7 @@ function emptySlotMedia(slot: GenSlotState) {
   slot.stillUrl = undefined;
   slot.videoUrl = undefined;
   slot.videoRequestId = undefined;
+  slot.videoStartedAt = undefined;
   slot.claimedAt = undefined;
   slot.error = undefined;
   slot.status = "queued";
@@ -1018,6 +1124,7 @@ function initJob(packet: GenerationPacket, engine: GenEngine, direction?: string
 }
 
 function finishIfDone(job: GenerationJob) {
+  if (job.status === "cancelled") return;
   if (job.slots.every((s) => s.status === "done")) {
     job.status = "done";
     job.error = undefined;
@@ -1302,7 +1409,7 @@ async function tickGenerationLocked(
     if (live || (job?.status === "running" && !opts.force)) {
       // One clip at a time. Never restart over an in-flight still/video.
     } else {
-      if (order.status === "paid") {
+      if (order.status === "paid" || order.status === "remake_requested") {
         order = await claimOrder(orderId, "grok");
       }
       const assets = (await listAssets({ orderId })).filter((a) => a.kind !== "delivery" && a.kind !== "still");
@@ -1316,8 +1423,19 @@ async function tickGenerationLocked(
   }
 
   if (!job) throw new Error("No generation in progress");
-  if (job.status === "done" && opts.action === "tick") {
+  if (job.status === "cancelled") {
     return { job, order: (await getOrder(orderId))! };
+  }
+  if (jobStopped(job.status) && opts.action === "tick") {
+    return { job, order: (await getOrder(orderId))! };
+  }
+
+  const timeout = detectGenerationTimeout(job);
+  if (timeout) {
+    const failed = persistFailedJob(job, timeout.message, timeout.slotId);
+    await saveGeneration(orderId, failed);
+    await appendEvent(orderId, "generate", `Failed · ${failed.error}`, "system");
+    throw new Error(failed.error);
   }
 
   const activeEngine = job.engine ?? engine;
@@ -1375,61 +1493,28 @@ async function tickGenerationLocked(
       job.cost = addImage(job.cost ?? emptyCost(), refs.length > 0);
       const stillAst = await attachGen(orderId, `${slot.id}-gen.jpg`, url, "image/jpeg", slot.duration ? "still" : "delivery");
       trackAsset(slot, stillAst.id);
+      slot.claimedAt = undefined;
       if (!slot.duration) {
         slot.status = "done";
         await appendEvent(orderId, "generate", `Still ready · ${slot.label}.`, "grok");
         await qcAndFloor(order, job, slot);
+      } else {
+        await appendEvent(orderId, "generate", `Still ready · ${slot.label}. Animating next.`, "grok");
+        // Same tick: if we wait for a later pump, remakes / dead workers hang forever at still.
+        await enqueueSlotVideo(order, job, slot, recipeSlot, packet);
       }
     } else if (slot.status === "still" && slot.stillUrl) {
-      if (!slot.duration) {
-        slot.status = "done";
-        await qcAndFloor(order, job, slot);
-      } else {
-        slot.status = "video";
-        slot.claimedAt = new Date().toISOString();
-        await saveGeneration(orderId, job);
-        const vidId = await startVideo(
-          slot.motionPrompt ||
-            motionPrompt(
-              recipeSlot,
-              slot.duration,
-              order.tone,
-              order.city,
-              order.state,
-              spokenForSlot(packet, slot.id),
-            ),
-          slot.stillUrl,
-          slot.duration,
-        );
-        slot.videoRequestId = vidId;
-        job.cost = addVideo(job.cost ?? emptyCost(), slot.duration ?? 15);
-        await appendEvent(orderId, "generate", `Animating ${slot.label} (${slot.duration}s API take).`, "grok");
-      }
+      await enqueueSlotVideo(order, job, slot, recipeSlot, packet);
     } else if (slot.status === "video") {
-      if (slot.claimedAt && Date.now() - Date.parse(slot.claimedAt) > 18 * 60 * 1000) {
+      const videoAge = slot.videoStartedAt || slot.claimedAt;
+      if (videoAge && Date.now() - Date.parse(videoAge) > VIDEO_WAIT_MS) {
         throw new Error("Video timed out after 18 minutes");
       }
       if (!slot.videoRequestId) {
-        if (claimIsFresh(slot)) {
+        if (claimIsFresh(slot) && slot.videoStartedAt) {
           return { job, order: (await getOrder(orderId))! };
         }
-        if (!slot.stillUrl) throw new Error("Missing still for video");
-        slot.claimedAt = new Date().toISOString();
-        await saveGeneration(orderId, job);
-        slot.videoRequestId = await startVideo(
-          slot.motionPrompt ||
-            motionPrompt(
-              recipeSlot,
-              slot.duration ?? 6,
-              order.tone,
-              order.city,
-              order.state,
-              spokenForSlot(packet, slot.id),
-            ),
-          slot.stillUrl,
-          slot.duration ?? 6,
-        );
-        job.cost = addVideo(job.cost ?? emptyCost(), slot.duration ?? 15);
+        await enqueueSlotVideo(order, job, slot, recipeSlot, packet);
       } else {
         const last = await pollVideo(slot.videoRequestId);
         const done = last.status === "done" || last.status === "completed" || last.status === "succeeded";
@@ -1483,10 +1568,13 @@ const workerRef = globalThis as typeof globalThis & {
 
 /** Droplet-side pump: start/tick spots as paid jobs land. QC stays human. */
 export function generateWorkerEnabled(): boolean {
-  if (env("AUTO_GENERATE") !== "1") return false;
   if (process.argv.includes("build")) return false;
   if (process.env.npm_lifecycle_event === "build") return false;
-  return generationEngine() === "xai" && Boolean(apiKey());
+  if (generationEngine() !== "xai" || !apiKey()) return false;
+  if (env("AUTO_GENERATE") === "0") return false;
+  // Vercel isolates die after the request — opt in only. Persistent node (droplet) defaults on.
+  if (env("VERCEL")) return env("AUTO_GENERATE") === "1";
+  return true;
 }
 
 async function pumpGenerateQueue(): Promise<void> {
@@ -1495,10 +1583,17 @@ async function pumpGenerateQueue(): Promise<void> {
   workerRef.__myaGenBusy__ = true;
   try {
     const orders = await listOrders();
-    const open = orders.filter((o) => o.product === "video-20" && (o.status === "paid" || o.status === "in_production"));
+    const open = orders.filter((o) => orderOpenForGeneratePump(o));
     for (const order of open) {
       const job = await loadGeneration(order.id);
-      if (job?.status === "done" || job?.status === "error") continue;
+      if (jobStopped(job?.status)) continue;
+      if (job?.status === "running") {
+        const timeout = detectGenerationTimeout(job);
+        if (timeout) {
+          await failTimedOutGeneration(order.id, timeout.message);
+          continue;
+        }
+      }
       const action = job ? "tick" : "start";
       await tickGeneration(order.id, { action });
       return;

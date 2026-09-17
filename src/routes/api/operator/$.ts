@@ -39,6 +39,7 @@ import {
   remakeFromBot,
   runBotTick,
   summarizeJob,
+  cancelJob,
 } from "@/lib/floor.server";
 import { collectReferencesFromBody, readOperatorJobRequest } from "@/lib/operator-refs";
 
@@ -120,7 +121,19 @@ async function handle(request: Request, splat: string, method: "GET" | "POST") {
         return Response.json(result);
       }
       if (method === "GET" && parts[1] === "jobs" && parts[2] && !parts[3]) {
-        return Response.json(await summarizeJob(parts[2]));
+        return Response.json(await summarizeJob(parts[2], undefined, { tick: true }));
+      }
+      if (method === "POST" && parts[1] === "jobs" && parts[2] && (parts[3] === "cancel" || parts[3] === "kill" || parts[3] === "abort")) {
+        const body = await readJson(request);
+        const reason =
+          (typeof body.reason === "string" && body.reason) ||
+          (typeof body.note === "string" && body.note) ||
+          (typeof body.direction === "string" && body.direction) ||
+          undefined;
+        return Response.json(await cancelJob(parts[2], reason));
+      }
+      if (method === "POST" && parts[1] === "jobs" && parts[2] && parts[3] === "tick") {
+        return Response.json(await summarizeJob(parts[2], undefined, { tick: true }));
       }
       if (method === "POST" && parts[1] === "jobs" && parts[2] && parts[3] === "remake") {
         const body = await readOperatorJobRequest(request);
@@ -277,6 +290,13 @@ async function handle(request: Request, splat: string, method: "GET" | "POST") {
       }
       if (action === "refund") {
         return Response.json({ order: await refundOrder(id, (body.note as string) ?? null) });
+      }
+      if (action === "cancel" || action === "kill" || action === "abort") {
+        const reason =
+          (typeof body.reason === "string" && body.reason) ||
+          (typeof body.note === "string" && body.note) ||
+          undefined;
+        return Response.json(await cancelJob(id, reason));
       }
       return Response.json({ error: "Unknown action" }, { status: 404 });
     }

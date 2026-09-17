@@ -3,10 +3,13 @@ import { env } from "./env.server";
 import {
   applyFloorDecision,
   assembleMaster,
+  cancelGeneration,
+  failTimedOutGeneration,
   loadGeneration,
   tickGeneration,
   type GenerationJob,
 } from "./generate-ad.server";
+import { detectGenerationTimeout, jobProgress, jobStopped } from "./generation-progress";
 import { operatorEmail, signedFileUrl } from "./operator-auth.server";
 import {
   appendEvent,
@@ -34,7 +37,7 @@ export const GROK_INTAKE_PROFILE = {
     "POST https://mya.geotargetus.dev/api/operator/bot/jobs with Authorization: Bearer <the operator token already in your notes>. JSON body: {\"profile\":\"<the entire paste>\",\"generate\":true}. Optional: \"email\" (delivery), \"direction\" (one-line visual change), \"references\" (owner/job-site photos as data URLs or /api/files URLs from POST /api/operator/uploads). Multipart also works: profile text + references=@photo.jpg.",
     "When the human attaches photos (owner headshot, van, pool, job site), you MUST send them as references. Do not invent faces, vans, or job sites. Upload files to this app — do not host them on pastebins.",
     "Only 20-second spots. Never start 12s or 40s. Never send a delivery email. Never refund. Never remake unless the human asks. Remake with POST /api/operator/bot/jobs/<orderId>/remake — existing reference photos stay on the order.",
-    "Reply with: business name, admin URL, generate cost (~$3.84 for one take: 2K still $0.08 + 15s 1080p $3.76). Then GET https://mya.geotargetus.dev/api/operator/bot/jobs/<orderId> every couple of minutes until status is done or error. Post a one-line result with the admin URL. If generate is already running, do not POST again.",
+    "Reply with: business name, admin URL, generate cost (~$3.84 for one take: 2K still $0.08 + 15s 1080p $3.76). Then GET https://mya.geotargetus.dev/api/operator/bot/jobs/<orderId> every couple of minutes until jobStatus is done, error, or cancelled. GET also ticks/polls the video so a still-ready job does not sit idle. If it hangs, POST .../jobs/<orderId>/cancel. Look at phase (still|video), videoStarted, timedOut. If generate is already running, do not POST the job again.",
     "If the profile is missing Voiceover 25–30s, city/state, or business name, ask for those — do not guess.",
   ].join(" "),
   firstMessage:
@@ -80,12 +83,15 @@ export type BotWork = {
 export async function nextFloorWork(): Promise<BotWork | null> {
   const orders = await listOrders();
   const open = orders.filter(
-    (o) => o.product === "video-20" && (o.status === "paid" || o.status === "in_production" || o.status === "qc"),
+    (o) =>
+      o.product === "video-20" &&
+      (o.status === "paid" || o.status === "in_production" || o.status === "remake_requested" || o.status === "qc"),
   );
   for (const order of open) {
     const job = await loadGeneration(order.id);
     const slot = job?.slots[0] ?? null;
     if (order.status === "delivered") continue;
+    if (job?.status === "cancelled") continue;
     return {
       orderId: order.id,
       businessName: order.business_name,
@@ -121,6 +127,9 @@ export async function runBotTick(): Promise<{ work: BotWork | null; did: string 
   if (!job) {
     await tickGeneration(order.id, { action: "start" });
     return { work, did: `Started generate for ${order.business_name}.` };
+  }
+  if (job.status === "cancelled") {
+    return { work, did: `${order.business_name} was cancelled.` };
   }
   if (job.status === "running" || job.slots.some((s) => s.status === "queued" || s.status === "still" || s.status === "video")) {
     await tickGeneration(order.id, { action: "tick" });
@@ -193,13 +202,36 @@ export async function remakeFromBot(
   return summarizeJob(orderId, job);
 }
 
-export async function summarizeJob(orderId: string, job?: GenerationJob | null) {
+export async function cancelJob(orderId: string, reason?: string) {
+  const result = await cancelGeneration(orderId, "bot", reason?.trim() || "Cancelled by operator");
+  return summarizeJob(orderId, result.job);
+}
+
+export async function summarizeJob(
+  orderId: string,
+  job?: GenerationJob | null,
+  opts: { tick?: boolean } = {},
+) {
   const order = await getOrder(orderId);
   if (!order) throw new Error("Order not found");
-  const loaded = job ?? (await loadGeneration(orderId));
+  let loaded = job ?? (await loadGeneration(orderId));
+  if (loaded?.status === "running") {
+    const timeout = detectGenerationTimeout(loaded);
+    if (timeout) {
+      loaded = (await failTimedOutGeneration(orderId, timeout.message)) ?? loaded;
+    } else if (opts.tick && !jobStopped(loaded.status)) {
+      try {
+        const result = await tickGeneration(orderId, { action: "tick" });
+        loaded = result.job;
+      } catch {
+        loaded = (await loadGeneration(orderId)) ?? loaded;
+      }
+    }
+  }
   const slot = loaded?.slots[0] ?? null;
   const cost = loaded ? estimateJobCost(loaded) : { totalCents: 0, stills: 0, videos: 0 };
   const origin = publicOrigin();
+  const progress = jobProgress(loaded);
   const references = (await listReferenceAssets(order.id)).map((a) => ({
     id: a.id,
     filename: a.filename,
@@ -217,6 +249,11 @@ export async function summarizeJob(orderId: string, job?: GenerationJob | null) 
     state: order.state,
     email: order.email,
     jobStatus: loaded?.status ?? null,
+    phase: progress.phase,
+    startedAt: progress.startedAt,
+    updatedAt: progress.updatedAt,
+    timedOut: progress.timedOut,
+    videoStarted: progress.videoStarted,
     error: loaded?.error ?? null,
     slot: slot
       ? { id: slot.id, label: slot.label, status: slot.status, qc: slot.qc ?? null }

@@ -29,6 +29,8 @@ type Props = {
   onStitch: () => void;
   onGenerate: () => void;
   generateLabel: string;
+  onCancel?: () => void;
+  canCancel?: boolean;
   direction: string;
   onDirection: (value: string) => void;
   onApplyDirection: () => void;
@@ -59,6 +61,8 @@ export function StudioDeck({
   onStitch,
   onGenerate,
   generateLabel,
+  onCancel,
+  canCancel,
   direction,
   onDirection,
   onApplyDirection,
@@ -246,6 +250,11 @@ export function StudioDeck({
           <Button size="sm" variant="secondary" disabled={!canGenerate || busy} onClick={onGenerate}>
             {generateLabel}
           </Button>
+          {canCancel && onCancel ? (
+            <Button size="sm" variant="secondary" disabled={busy} onClick={onCancel}>
+              Cancel job
+            </Button>
+          ) : null}
           <Button size="sm" disabled={busy || line.length === 0} onClick={onStitch}>
             {stitching ? "Stitching…" : `Master ${targetSeconds}s`}
           </Button>
