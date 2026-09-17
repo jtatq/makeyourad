@@ -15,6 +15,7 @@ import {
   runAutoQc,
   saveTimeline,
   tickGeneration,
+  cancelGeneration,
 } from "./generate-ad.server";
 import {
   applyAudienceProfile,
@@ -156,6 +157,13 @@ export const adminClaim = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     requireAdmin();
     return claimOrder(data.id, "admin");
+  });
+
+export const adminCancelGenerate = createServerFn({ method: "POST" })
+  .validator(z.object({ id: z.string(), reason: z.string().optional() }))
+  .handler(async ({ data }) => {
+    requireAdmin();
+    return cancelGeneration(data.id, "admin", data.reason?.trim() || "Cancelled by operator");
   });
 
 export const adminGenerate = createServerFn({ method: "POST" })

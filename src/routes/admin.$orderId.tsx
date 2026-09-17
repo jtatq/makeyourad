@@ -10,6 +10,7 @@ import {
   adminAssemble,
   adminApplyProfile,
   adminAttach,
+  adminCancelGenerate,
   adminClaim,
   adminDeliver,
   adminFlag,
@@ -146,9 +147,11 @@ function Detail({
               ? "waiting"
               : s.status === "still" && !s.stillUrl
                 ? "drawing"
-                : s.status === "still" || s.status === "video"
-                  ? "animating"
-                  : s.status,
+                : s.status === "still"
+                  ? "still ready"
+                  : s.status === "video"
+                    ? "animating"
+                    : s.status,
     }));
   const generateLabel =
     busy === "generate"
@@ -161,7 +164,7 @@ function Detail({
             : "Generating…"
           : generation?.status === "done"
             ? "Generate again"
-            : generation?.status === "error"
+            : generation?.status === "error" || generation?.status === "cancelled"
               ? "Retry generate"
               : "Generate takes";
 
@@ -204,6 +207,14 @@ function Detail({
               </p>
             );
           })()}
+          {generation?.error ? (
+            <p className="mt-3 rounded-md bg-warn px-4 py-3 text-sm text-fg">{generation.error}</p>
+          ) : generation?.status === "running" ? (
+            <p className="mt-2 text-sm text-muted">
+              Generate · {generation.slots.some((s) => s.videoRequestId || s.status === "video") ? "video" : generation.slots.some((s) => s.stillUrl) ? "still ready" : "still"}{" "}
+              · started {generation.startedAt}
+            </p>
+          ) : null}
           {generation?.floor ? (
             <p
               className={`mt-3 rounded-md px-4 py-3 text-sm ${
@@ -244,6 +255,8 @@ function Detail({
               stitching={busy === "assemble"}
               canGenerate={canGenerate && !generating}
               generateLabel={generateLabel}
+              canCancel={generation?.status === "running"}
+              onCancel={() => void run("generate", () => adminCancelGenerate({ data: { id: order.id } }))}
               direction={direction || generation?.direction || ""}
               onDirection={setDirection}
               onApplyDirection={() => {
@@ -298,7 +311,7 @@ function Detail({
                       id: order.id,
                       action: "start",
                       direction: (direction || generation?.direction || "").trim() || undefined,
-                      force: generation?.status === "error",
+                      force: generation?.status === "error" || generation?.status === "cancelled",
                     },
                   }),
                 )
