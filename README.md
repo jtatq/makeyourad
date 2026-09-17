@@ -102,8 +102,10 @@ JSON may also send `references: [{ "filename", "mime", "dataUrl", "kind": "uploa
 curl -sS -X POST "$ORIGIN/api/operator/bot/jobs/$ORDER_ID/remake" \
   -H "Authorization: Bearer $OPERATOR_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"direction":"Match Alan'\''s face and the real pool from the attached photos.","generate":true}'
+  -d '{"direction":"Match Alan'\''s face and the real pool from the attached photos. Minimal on-screen text — business name and city only.","generate":true}'
 ```
+
+`generate:true` (the default) **always starts a new still** — it clears the prior take and returns a new `stillUrl`. Attached reference photos are sent into `/images/edits` (not a text-only fallback). Direction may ask for **minimal on-screen text** (business name + city / end-card only); the spoken VO still uses the full script.
 
 Optional extra photos on remake: same `references` field or multipart files. Add photos to an existing job without remaking: `POST /api/operator/bot/jobs/:id/references` or `POST /api/operator/orders/:id/references`.
 

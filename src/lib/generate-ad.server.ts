@@ -28,6 +28,21 @@ import {
   orderOpenForGeneratePump,
   VIDEO_WAIT_MS,
 } from "./generation-progress";
+import {
+  endCardTypeInstruction,
+  motionScriptInstruction,
+  onScreenMode,
+  shouldReinitGeneration,
+  spokenScriptInstruction,
+} from "./generate-direction";
+import {
+  compactDataUrlForModel,
+  imageGenerationAttempts,
+  MAX_XAI_EDIT_IMAGES,
+  preferredRefSource,
+  rankReferenceAssets,
+  referencePromptBlock,
+} from "./generate-refs";
 
 export type GenEngine = "imagine" | "xai";
 export type GenSlotStatus = "queued" | "still" | "video" | "done" | "error";
@@ -102,7 +117,6 @@ export type ImagineWork = {
 const IMAGE_MODEL = "grok-imagine-image-2.0";
 const VIDEO_MODEL = "grok-imagine-video-1.5";
 const XAI = "https://api.x.ai/v1";
-const MAX_DATA_URI = 3_500_000;
 const CLAIM_MS = 8 * 60 * 1000;
 const XAI_GET_MS = 30_000;
 const XAI_POST_MS = 120_000;
@@ -297,6 +311,7 @@ async function enqueueSlotVideo(
         order.city,
         order.state,
         spokenForSlot(packet, slot.id),
+        job.direction,
       ),
     slot.stillUrl,
     slot.duration,
@@ -387,10 +402,16 @@ function continuityLine(packet: GenerationPacket, direction?: string): string {
   const cta = packet.website_profile?.cta || "Call today";
   const music = TONE_PACKS[i.tone].music;
   const dir = direction?.trim();
+  const endType = endCardTypeInstruction(onScreenMode(dir), {
+    businessName: i.businessName,
+    place: spokenPlace(i.city, i.state),
+    phone: i.phone,
+    cta,
+  });
   return [
     "ONE CONTINUOUS SHOT. Do not cut to a new location or a separate end-card graphic.",
     `Music: ${music} One bed from frame one through the last frame — never restart, never drop out on the end card.`,
-    `In the last three seconds the camera holds and clean type fades on: ${i.businessName}. ${spokenPlace(i.city, i.state)}. ${i.phone}. ${cta}.`,
+    endType,
     "Never speak the ad length. Never say twelve seconds, twenty seconds, or forty seconds.",
     dir ? `DIRECTION CHANGE (this overrides the previous take): ${dir}` : "",
     "This is the customer-facing ad. Do not mention geofences, grocery or retail anchors, household income, age ranges, pilates studios, golf communities, or any media-buy targeting.",
@@ -406,9 +427,15 @@ function spokenForSlot(packet: GenerationPacket, slotId: string): string {
   return extractProductScript(packet.intake.brief, packet.product);
 }
 
-function stillPrompt(packet: GenerationPacket, slot: GenerationPacket["recipe"]["slots"][number], ratio: string) {
+function stillPrompt(
+  packet: GenerationPacket,
+  slot: GenerationPacket["recipe"]["slots"][number],
+  ratio: string,
+  direction?: string,
+) {
   const i = packet.intake;
   const site = packet.website_profile;
+  const mode = onScreenMode(direction);
   const lines = [
     `Photoreal local-business advertisement still, ${ratio}, cinematic, natural light.`,
     `Business: ${i.businessName}, ${i.category_label} in ${spokenPlace(i.city, i.state)}.`,
@@ -421,26 +448,29 @@ function stillPrompt(packet: GenerationPacket, slot: GenerationPacket["recipe"][
     site?.services?.length ? `Services: ${site.services.slice(0, 6).join(", ")}` : "",
     site?.about ? `About: ${site.about.slice(0, 280)}` : "",
     `Use the real business. Do not invent a different company or a celebrity.`,
-    packet.assets.length
-      ? `Reference photos on this order (match face, shirt, van, and job site — do not invent): ${packet.assets.map((a) => `${a.kind}:${a.filename}`).join(", ")}.`
-      : "",
+    referencePromptBlock(packet.assets.filter((a) => a.kind === "logo" || a.kind === "upload")),
     `No watermarks, no agency slogans, no UI chrome.`,
     `Never say twelve seconds, twenty seconds, forty seconds, or any runtime.`,
-    continuityLine(packet),
+    continuityLine(packet, direction),
   ];
   if (slot.id === "end_card" || slot.id === "static") {
     lines.push(
-      `On-screen type, clean and readable: ${i.businessName}. ${spokenPlace(i.city, i.state)}. ${i.phone}. CTA: ${site?.cta || "Call today"}. Never letter the state (not U.T.).`,
+      mode === "minimal-endcard"
+        ? `On-screen type, clean and readable: ${i.businessName}. ${spokenPlace(i.city, i.state)}. No voiceover paragraph. Never letter the state (not U.T.).`
+        : `On-screen type, clean and readable: ${i.businessName}. ${spokenPlace(i.city, i.state)}. ${i.phone}. CTA: ${site?.cta || "Call today"}. Never letter the state (not U.T.).`,
     );
   }
   if (slot.id === "hook" || slot.id.startsWith("body")) {
     const line = extractProductScript(i.brief, packet.product);
     lines.push(
-      "Talking-head: a real owner or technician from the reference photos stands in the driveway or at the storefront, facing camera, mid-speech. Van, truck, or house from the uploads sits behind them. Match their face, shirt, and wrap — do not invent lettering.",
+      packet.assets.length
+        ? "Talking-head: the real person from the attached reference photos, facing camera, mid-speech, at the real job site from those photos."
+        : "Talking-head: a local owner or technician facing camera, mid-speech, at a real driveway or storefront.",
     );
-    if (line) {
-      lines.push(`Mouth the exact full script: "${line}". Captions match those words. This is the script, not an idea.`);
-    }
+    lines.push(
+      "Do not invent vehicles, pool shapes, buildings, or lettering that are not in the reference photos. If no van is in the photos, do not add a branded service van.",
+    );
+    if (line) lines.push(spokenScriptInstruction(line, mode));
   }
   if (slot.id === "mascot" && i.mascotDescription) lines.push(`Mascot: ${i.mascotDescription}`);
   return lines.filter(Boolean).join("\n");
@@ -453,15 +483,16 @@ function motionPrompt(
   city: string,
   state: string,
   spokenLine?: string,
+  direction?: string,
 ) {
+  const mode = onScreenMode(direction);
   const talking =
     slot.id === "hook" || slot.id.startsWith("body")
       ? [
           "The person talks to camera with natural hand gestures. Mouth moves in speech.",
-          spokenLine
-            ? `Speak this script verbatim, do not paraphrase: "${spokenLine}". Captions match exactly.`
-            : "",
+          spokenLine ? motionScriptInstruction(spokenLine, mode) : "",
           pronunciationNote(city, state),
+          "Keep the person, pool, and location from the still and reference photos. Do not invent a van or a different pool.",
           "Do not freeze the last seconds.",
         ]
           .filter(Boolean)
@@ -481,10 +512,12 @@ function imagineStillPrompt(
   packet: GenerationPacket,
   slot: GenerationPacket["recipe"]["slots"][number],
   ratio: string,
+  direction?: string,
 ) {
   const i = packet.intake;
   const site = packet.website_profile;
   const tone = TONE_PACKS[i.tone];
+  const mode = onScreenMode(direction);
   const parts = [
     `A photoreal ${ratio} advertisement still for ${i.businessName}, a ${i.category_label} in ${spokenPlace(i.city, i.state)}.`,
     `This frame is the ${slot.label.toLowerCase()}: ${slot.role}`,
@@ -499,22 +532,24 @@ function imagineStillPrompt(
   if (site?.about) parts.push(site.about.slice(0, 220));
   if (slot.id === "end_card" || slot.id === "static") {
     parts.push(
-      `Put clean readable type on screen: ${i.businessName}. ${spokenPlace(i.city, i.state)}. ${i.phone}. ${site?.cta || "Call today"}. Write the full state name, never UT or U.T.`,
+      mode === "minimal-endcard"
+        ? `Put clean readable type on screen: ${i.businessName}. ${spokenPlace(i.city, i.state)}. No voiceover paragraph. Write the full state name, never UT or U.T.`
+        : `Put clean readable type on screen: ${i.businessName}. ${spokenPlace(i.city, i.state)}. ${i.phone}. ${site?.cta || "Call today"}. Write the full state name, never UT or U.T.`,
     );
   }
   if (slot.id === "hook") {
     const line = slotScriptLine(i.brief, packet.product, slot.id);
     parts.push(
-      "Talking-head still: owner or tech from the reference photos, facing camera, mid-speech, branded van or house behind them. Match face, shirt, and wrap exactly. Do not invent lettering on the van or shirt.",
+      "Talking-head still: owner or tech from the reference photos, facing camera, mid-speech, at the real job site from those photos. Match face and clothing exactly.",
     );
-    if (line) parts.push(`They are saying, verbatim: "${line}".`);
+    parts.push(
+      "Do not invent a branded van, a different pool shape, or lettering that is not in the photos.",
+    );
+    if (line) parts.push(spokenScriptInstruction(line, mode));
   }
   if (slot.id === "mascot" && i.mascotDescription) parts.push(`Mascot: ${i.mascotDescription}`);
-  if (packet.assets.length) {
-    parts.push(
-      `Reference photos on this order (match face, shirt, van, and job site — do not invent): ${packet.assets.map((a) => `${a.kind}:${a.filename}`).join(", ")}.`,
-    );
-  }
+  const refs = referencePromptBlock(packet.assets.filter((a) => a.kind === "logo" || a.kind === "upload"));
+  if (refs) parts.push(refs);
   parts.push("Use the real business. No celebrity, no watermark, no UI chrome, no agency slogan.");
   parts.push("Do not mention geofences, grocery or retail anchors, household income, age ranges, pilates studios, golf communities, or any media-buy targeting.");
   return parts.join(" ");
@@ -527,16 +562,17 @@ function imagineMotionPrompt(
   city: string,
   state: string,
   spokenLine?: string,
+  direction?: string,
 ) {
   const pack = TONE_PACKS[tone];
+  const mode = onScreenMode(direction);
   const talking =
     slot.id === "hook" || slot.id.startsWith("body")
       ? [
           "The person talks to camera with natural hand gestures and a slight weight shift. Mouth moves in speech.",
-          spokenLine
-            ? `Speak this script verbatim, do not paraphrase: "${spokenLine}". Captions match exactly.`
-            : "",
+          spokenLine ? motionScriptInstruction(spokenLine, mode) : "",
           pronunciationNote(city, state),
+          "Keep the person, pool, and location from the still and reference photos. Do not invent a van or a different pool.",
           "Do not freeze the last seconds.",
         ]
           .filter(Boolean)
@@ -553,62 +589,77 @@ function imagineMotionPrompt(
   ].join(" ");
 }
 
-async function referenceUris(orderId: string, preferLogo: boolean): Promise<string[]> {
-  const assets = await listAssets({ orderId });
-  const usable = assets.filter((a) => a.kind === "logo" || a.kind === "upload");
-  const ordered = preferLogo
-    ? [...usable.filter((a) => a.kind === "logo"), ...usable.filter((a) => a.kind !== "logo")]
-    : [...usable.filter((a) => a.kind !== "logo"), ...usable.filter((a) => a.kind === "logo")];
-  const out: string[] = [];
-  for (const a of ordered) {
-    let uri: string | null = null;
-    if (a.external_url?.startsWith("http") && !a.external_url.includes("127.0.0.1")) uri = a.external_url;
-    else if (a.data_url && a.data_url.length < MAX_DATA_URI && a.data_url.startsWith("data:")) uri = a.data_url;
-    if (uri) out.push(uri);
-    if (out.length >= 8) break;
+async function assetToModelUri(a: {
+  data_url: string | null;
+  external_url: string | null;
+  mime: string;
+}): Promise<string | null> {
+  const source = preferredRefSource(a);
+  let dataUrl: string | null = null;
+  if (source === "data" && a.data_url) dataUrl = a.data_url;
+  else if (source === "http" && a.external_url) {
+    try {
+      const res = await fetch(a.external_url, { signal: AbortSignal.timeout(15_000) });
+      if (res.ok) {
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length > 0 && buf.length < 8_000_000) {
+          const mime = res.headers.get("content-type") || a.mime || "image/jpeg";
+          dataUrl = `data:${mime.split(";")[0]};base64,${buf.toString("base64")}`;
+        }
+      }
+    } catch {
+      dataUrl = null;
+    }
   }
-  return out;
+  if (!dataUrl) return null;
+  const compact = await compactDataUrlForModel(dataUrl);
+  return compact || null;
 }
 
-function imageRef(url: string) {
-  return { url, type: "image_url" };
+async function loadReferenceImages(
+  orderId: string,
+  preferLogo: boolean,
+): Promise<{ uris: string[]; used: Array<{ kind: string; filename: string }> }> {
+  const assets = await listAssets({ orderId });
+  const ranked = rankReferenceAssets(assets, preferLogo);
+  const uris: string[] = [];
+  const used: Array<{ kind: string; filename: string }> = [];
+  for (const a of ranked) {
+    const uri = await assetToModelUri(a);
+    if (!uri) continue;
+    uris.push(uri);
+    used.push({ kind: a.kind, filename: a.filename });
+    if (uris.length >= MAX_XAI_EDIT_IMAGES) break;
+  }
+  return { uris, used };
 }
 
 async function generateStill(prompt: string, refs: string[]): Promise<string> {
-  const payload: Record<string, unknown> = {
-    model: IMAGE_MODEL,
-    prompt,
-    n: 1,
-    aspect_ratio: "9:16",
-    resolution: "2k",
-  };
-  const path = refs.length ? "/images/edits" : "/images/generations";
-  if (refs.length === 1) payload.image = imageRef(refs[0]);
-  if (refs.length > 1) payload.image = refs.map(imageRef);
-  let res = await xaiFetch(path, { method: "POST", body: JSON.stringify(payload) });
-  if (!res.ok && payload.aspect_ratio) {
-    delete payload.aspect_ratio;
-    res = await xaiFetch(path, { method: "POST", body: JSON.stringify(payload) });
-  }
-  if (!res.ok && refs.length > 1) {
-    payload.image = imageRef(refs[0]);
-    res = await xaiFetch(path, { method: "POST", body: JSON.stringify(payload) });
-  }
-  if (!res.ok && refs.length) {
-    delete payload.image;
-    res = await xaiFetch("/images/generations", { method: "POST", body: JSON.stringify(payload) });
-  }
-  const body: unknown = await res.json().catch(() => null);
-  if (!res.ok) {
-    const msg =
+  const attempts = imageGenerationAttempts(refs);
+  let lastMsg = "xAI image error";
+  for (const attempt of attempts) {
+    const payload: Record<string, unknown> = {
+      model: IMAGE_MODEL,
+      prompt,
+      n: 1,
+      resolution: attempt.resolution ?? "2k",
+    };
+    if (attempt.aspectRatio) payload.aspect_ratio = attempt.aspectRatio;
+    if (attempt.image) payload.image = attempt.image;
+    const res = await xaiFetch(attempt.path, { method: "POST", body: JSON.stringify(payload) });
+    const body: unknown = await res.json().catch(() => null);
+    if (res.ok) {
+      const url = pickUrl(body);
+      if (url) return url;
+      lastMsg = "Image generation returned no URL";
+      continue;
+    }
+    lastMsg =
       body && typeof body === "object" && "error" in body
         ? JSON.stringify((body as { error: unknown }).error)
         : `xAI image error ${res.status}`;
-    throw new Error(msg.slice(0, 280));
   }
-  const url = pickUrl(body);
-  if (!url) throw new Error("Image generation returned no URL");
-  return url;
+  throw new Error(lastMsg.slice(0, 280));
 }
 
 async function startVideo(prompt: string, imageUrl: string, duration: number): Promise<string> {
@@ -1086,6 +1137,20 @@ async function clearGenFiles(orderId: string) {
   );
 }
 
+/** Drop prior still/video so remake + generate:true cannot return the same stillUrl. */
+export async function resetGeneration(orderId: string): Promise<void> {
+  const job = await loadGeneration(orderId);
+  if (job) {
+    for (const slot of job.slots) {
+      await discardSlotAssets(orderId, slot, job);
+    }
+  }
+  await clearGenFiles(orderId);
+  await ensureGenerationColumn();
+  const sql = await getSql();
+  await sql.query(`update orders set generation = null, updated_at = now() where id = $1`, [orderId]);
+}
+
 function initJob(packet: GenerationPacket, engine: GenEngine, direction?: string): GenerationJob {
   const now = new Date().toISOString();
   const ratio = packet.aspect_ratio_priority[0] ?? "9:16";
@@ -1100,12 +1165,33 @@ function initJob(packet: GenerationPacket, engine: GenEngine, direction?: string
       const target = slotSeconds(s.duration);
       const duration = engine === "imagine" ? imagineSeconds(s.duration) : apiVideoSeconds(target);
       const spoken = spokenForSlot(packet, s.id);
-      const still = (engine === "imagine" ? imagineStillPrompt(packet, s, ratio) : stillPrompt(packet, s, ratio)) + " " + extra;
+      const still =
+        (engine === "imagine"
+          ? imagineStillPrompt(packet, s, ratio, direction)
+          : stillPrompt(packet, s, ratio, direction)) +
+        " " +
+        extra;
       const motion =
         duration != null
           ? (engine === "imagine"
-              ? imagineMotionPrompt(s, duration, packet.intake.tone, packet.intake.city, packet.intake.state, spoken)
-              : motionPrompt(s, duration, packet.intake.tone, packet.intake.city, packet.intake.state, spoken)) +
+              ? imagineMotionPrompt(
+                  s,
+                  duration,
+                  packet.intake.tone,
+                  packet.intake.city,
+                  packet.intake.state,
+                  spoken,
+                  direction,
+                )
+              : motionPrompt(
+                  s,
+                  duration,
+                  packet.intake.tone,
+                  packet.intake.city,
+                  packet.intake.state,
+                  spoken,
+                  direction,
+                )) +
             " " +
             extra
           : undefined;
@@ -1406,9 +1492,7 @@ async function tickGenerationLocked(
   );
 
   if (opts.action === "start") {
-    if (live || (job?.status === "running" && !opts.force)) {
-      // One clip at a time. Never restart over an in-flight still/video.
-    } else {
+    if (shouldReinitGeneration(opts.action, opts.force, job?.status, Boolean(live))) {
       if (order.status === "paid" || order.status === "remake_requested") {
         order = await claimOrder(orderId, "grok");
       }
@@ -1487,10 +1571,25 @@ async function tickGenerationLocked(
       slot.status = "still";
       slot.claimedAt = new Date().toISOString();
       await saveGeneration(orderId, job);
-      const refs = await referenceUris(orderId, slot.id === "end_card" || slot.id === "static");
-      const url = await generateStill(slot.stillPrompt || stillPrompt(packet, recipeSlot, ratio), refs);
+      const refs = await loadReferenceImages(orderId, slot.id === "end_card" || slot.id === "static");
+      if (packetAssets.some((a) => a.kind === "logo" || a.kind === "upload") && refs.uris.length === 0) {
+        throw new Error("Reference photos are on this order but none could be sent to the image model.");
+      }
+      const stillBase = slot.stillPrompt || stillPrompt(packet, recipeSlot, ratio, job.direction);
+      const url = await generateStill(
+        refs.used.length ? `${stillBase}\n${referencePromptBlock(refs.used)}` : stillBase,
+        refs.uris,
+      );
       slot.stillUrl = url;
-      job.cost = addImage(job.cost ?? emptyCost(), refs.length > 0);
+      job.cost = addImage(job.cost ?? emptyCost(), refs.uris.length > 0);
+      if (refs.uris.length) {
+        await appendEvent(
+          orderId,
+          "generate",
+          `Still · ${refs.uris.length} reference photo(s) sent to the image model.`,
+          "grok",
+        );
+      }
       const stillAst = await attachGen(orderId, `${slot.id}-gen.jpg`, url, "image/jpeg", slot.duration ? "still" : "delivery");
       trackAsset(slot, stillAst.id);
       slot.claimedAt = undefined;
