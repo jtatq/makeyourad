@@ -1,5 +1,4 @@
-import sharp from "sharp";
-import { safeFilename, safeMime } from "./filename";
+import { safeFilename, safeMime } from "./filename.ts";
 
 export const MAX_BOT_REFERENCES = 8;
 export const MAX_REFERENCE_DATA_URL = 2_400_000;
@@ -210,6 +209,7 @@ export async function compressReferenceBytes(
   mime: string,
   kind: ReferenceKind,
 ): Promise<{ filename: string; mime: string; dataUrl: string; kind: ReferenceKind }> {
+  const { default: sharp } = await import("sharp");
   const img = sharp(bytes, { failOn: "none" }).rotate();
   const meta = await img.metadata();
   const maxEdge = kind === "logo" ? 900 : 1280;
