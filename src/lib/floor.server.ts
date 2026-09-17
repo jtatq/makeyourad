@@ -6,6 +6,7 @@ import {
   cancelGeneration,
   failTimedOutGeneration,
   loadGeneration,
+  resetGeneration,
   tickGeneration,
   type GenerationJob,
 } from "./generate-ad.server";
@@ -36,7 +37,7 @@ export const GROK_INTAKE_PROFILE = {
     "Call the MakeYourAd API. Do not drive the admin UI unless the API fails.",
     "POST https://mya.geotargetus.dev/api/operator/bot/jobs with Authorization: Bearer <the operator token already in your notes>. JSON body: {\"profile\":\"<the entire paste>\",\"generate\":true}. Optional: \"email\" (delivery), \"direction\" (one-line visual change), \"references\" (owner/job-site photos as data URLs or /api/files URLs from POST /api/operator/uploads). Multipart also works: profile text + references=@photo.jpg.",
     "When the human attaches photos (owner headshot, van, pool, job site), you MUST send them as references. Do not invent faces, vans, or job sites. Upload files to this app — do not host them on pastebins.",
-    "Only 20-second spots. Never start 12s or 40s. Never send a delivery email. Never refund. Never remake unless the human asks. Remake with POST /api/operator/bot/jobs/<orderId>/remake — existing reference photos stay on the order.",
+    "Only 20-second spots. Never start 12s or 40s. Never send a delivery email. Never refund. Never remake unless the human asks. Remake with POST /api/operator/bot/jobs/<orderId>/remake and generate:true — that always starts a new still (new stillUrl). Existing reference photos stay on the order. Optional direction can ask for minimal on-screen text (business name + city only) while keeping the spoken VO.",
     "Reply with: business name, admin URL, generate cost (~$3.84 for one take: 2K still $0.08 + 15s 1080p $3.76). Then GET https://mya.geotargetus.dev/api/operator/bot/jobs/<orderId> every couple of minutes until jobStatus is done, error, or cancelled. GET also ticks/polls the video so a still-ready job does not sit idle. If it hangs, POST .../jobs/<orderId>/cancel. Look at phase (still|video), videoStarted, timedOut. If generate is already running, do not POST the job again.",
     "If the profile is missing Voiceover 25–30s, city/state, or business name, ask for those — do not guess.",
   ].join(" "),
@@ -190,16 +191,16 @@ export async function remakeFromBot(
   }
   const note = opts.direction?.trim() || null;
   await remakeOrder(orderId, note, "bot");
-  let job = await loadGeneration(orderId);
   if (opts.generate !== false) {
+    await resetGeneration(orderId);
     const result = await tickGeneration(orderId, {
       action: "start",
       force: true,
       direction: note || undefined,
     });
-    job = result.job;
+    return summarizeJob(orderId, result.job);
   }
-  return summarizeJob(orderId, job);
+  return summarizeJob(orderId);
 }
 
 export async function cancelJob(orderId: string, reason?: string) {
