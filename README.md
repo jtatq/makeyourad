@@ -34,7 +34,7 @@ All routes require `Authorization: Bearer $OPERATOR_TOKEN`.
 - `GET /api/operator/orders?status=paid`
 - `GET /api/operator/orders/:id`
 - `GET /api/operator/orders/:id/packet`
-- `POST /api/operator/orders/:id/generate` body `{ "action": "start" | "tick", "force": false, "direction": "...", "videoDirection": "..." }` — queues a SuperGrok Imagine job (or ticks the xAI REST path if `GENERATION_ENGINE=xai`). `videoDirection` is the visual shot list for the video pass; if omitted it is parsed from `[VISUAL:]` / camera notes in the brief.
+- `POST /api/operator/orders/:id/generate` body `{ "action": "start" | "tick", "force": false, "direction": "...", "videoDirection": "...", "endCard": ["..."], "lowerThird": ["..."] }` — queues a SuperGrok Imagine job (or ticks the xAI REST path if `GENERATION_ENGINE=xai`). `videoDirection` is the visual shot list for the video pass; if omitted it is parsed from `[VISUAL:]` / camera notes in the brief. Exact `endCard` / `lowerThird` lines are composited after generation (also parsed from `[END CARD:]` / `[LOWER THIRD:]`).
 - `POST /api/operator/orders/:id/cancel` (aliases `/kill`, `/abort`) — stop a running generate so it cannot keep spending
 - `GET /api/operator/imagine/pending` — running Imagine jobs
 - `GET /api/operator/imagine/next` — claim the next still or clip
@@ -151,6 +151,70 @@ curl -sS -X POST "$ORIGIN/api/operator/bot/jobs/$ORDER_ID/remake" \
 ```
 
 Spoken VO in that Knoxville example stays: "You didn't build your business… Join us today." The still does not letter the skyline / Market Square / lower-third list. The video prompt includes that shot list.
+
+### Exact end-card / lower-third overlay (deterministic type)
+
+AI-drawn letters are unreliable for brand copy (`Knowillo` / `Knoxvillo` instead of `Knoxville`). When the brief or API names an end card or lower third, MakeYourAd composites that copy **after** still/video generation (and again on the stitched master if the clip was not already overlaid).
+
+Design:
+
+1. Parse exact lines from `endCard` / `lowerThird` (aliases: `end_card`, `lower_third`, `lowerThirds`) **or** from `[END CARD:]` / `[LOWER THIRD:]` / `End card:` / `Lower third:` in the brief or `videoDirection`.
+2. Spoken VO is unchanged. The generative prompt is told **not** to letter those words — leave a clean plate.
+3. After the still (end-card / static slots) and after the video take, Sharp / ffmpeg burn the same SVG type. Lower third is timed mid-spot; end card holds the last ~3 seconds. Audio is copied, not rewritten.
+4. Remake / cancel / reference photos / second-pass `videoDirection` behave as before. Overlay spec is stored on the job and re-parsed on remake.
+
+```bash
+# Preferred: send the exact lines (slash-separated or string arrays)
+curl -sS -X POST "$ORIGIN/api/operator/bot/jobs" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "profile": "Business Name: Knoxville Chamber\nBusiness Address: 17 Market Square, Knoxville, TN\n\nVoiceover 25–30 seconds\nYou didn'\''t build your business in a vacuum. Join us today.\n\n[VISUAL:] Open on downtown Knoxville skyline\n[LOWER THIRD:] Larisa Brass | Director of Innovation\n[END CARD:] Knoxville Chamber / Innovation. Prosperity. Knoxville. / KnoxvilleChamber.com",
+    "endCard": ["Knoxville Chamber", "Innovation. Prosperity. Knoxville.", "KnoxvilleChamber.com"],
+    "lowerThird": "Larisa Brass | Director of Innovation",
+    "direction": "Minimal on-screen text — do not burn the VO as captions.",
+    "generate": true
+  }'
+
+# Remake: keep spoken VO + photos; replace overlay copy
+curl -sS -X POST "$ORIGIN/api/operator/bot/jobs/$ORDER_ID/remake" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "endCard": "Knoxville Chamber / Innovation. Prosperity. Knoxville. / KnoxvilleChamber.com",
+    "lowerThird": ["Larisa Brass", "Director of Innovation"],
+    "generate": true
+  }'
+```
+
+#### Curl verify notes
+
+```bash
+# 1) Create without spending (generate:false) and confirm parsed overlay + unchanged VO fields.
+curl -sS -X POST "$ORIGIN/api/operator/bot/jobs" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "profile": "Business Name: Knoxville Chamber\nCity: Knoxville\nState: TN\n\nVoiceover 25–30 seconds\nYou didn'\''t build your business in a vacuum. Join us today.\n\n[END CARD:] Knoxville Chamber / Innovation. Prosperity. Knoxville. / KnoxvilleChamber.com\n[LOWER THIRD:] Larisa Brass | Director of Innovation",
+    "generate": false
+  }'
+# Expect JSON: businessName "Knoxville Chamber", endCard includes "Knoxville" (not Knowillo),
+# lowerThird includes "Larisa Brass", jobStatus null / not running.
+
+# 2) After a generate finishes, GET the job and confirm overlay fields are still exact.
+curl -sS "$ORIGIN/api/operator/bot/jobs/$ORDER_ID" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN"
+# Expect: endCard = ["Knoxville Chamber","Innovation. Prosperity. Knoxville.","KnoxvilleChamber.com"]
+#         lowerThird = ["Larisa Brass","Director of Innovation"]
+#         overlaysApplied true once the clip is composited
+# Download stillUrl / videoUrl and read the type — it must spell Knoxville.
+
+# 3) Cancel / remake still work with overlay fields present.
+curl -sS -X POST "$ORIGIN/api/operator/bot/jobs/$ORDER_ID/cancel" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"operator stop"}'
+```
 
 Optional extra photos on remake: same `references` field or multipart files. Add photos to an existing job without remaking: `POST /api/operator/bot/jobs/:id/references` or `POST /api/operator/orders/:id/references`.
 

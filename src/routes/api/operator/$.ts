@@ -42,6 +42,7 @@ import {
   cancelJob,
 } from "@/lib/floor.server";
 import { collectReferencesFromBody, readOperatorJobRequest } from "@/lib/operator-refs";
+import { specFromFields } from "@/lib/text-overlay";
 
 export const Route = createFileRoute("/api/operator/$")({
   server: {
@@ -117,6 +118,7 @@ async function handle(request: Request, splat: string, method: "GET" | "POST") {
           generate: body.generate,
           direction: body.direction,
           videoDirection: body.videoDirection,
+          textOverlay: body.textOverlay,
           references: body.references,
         });
         return Response.json(result);
@@ -142,6 +144,7 @@ async function handle(request: Request, splat: string, method: "GET" | "POST") {
           await remakeFromBot(parts[2], {
             direction: body.direction,
             videoDirection: body.videoDirection,
+            textOverlay: body.textOverlay,
             generate: body.generate,
             references: body.references,
           }),
@@ -256,6 +259,10 @@ async function handle(request: Request, splat: string, method: "GET" | "POST") {
                 : typeof body.shotList === "string"
                   ? body.shotList
                   : undefined,
+          textOverlay: specFromFields(
+            body.endCard ?? body.end_card,
+            body.lowerThird ?? body.lower_third ?? body.lowerThirds,
+          ),
         });
         return Response.json(result);
       }

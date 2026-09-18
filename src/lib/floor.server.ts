@@ -24,6 +24,7 @@ import {
   remakeOrder,
 } from "./orders.server";
 import type { ReferenceInput } from "./operator-refs";
+import { composeStoredVisual, hasTextOverlay, resolveTextOverlay, type TextOverlaySpec } from "./text-overlay";
 import { resolveVideoDirection } from "./video-direction";
 import { estimateJobCost } from "./xai-cost";
 
@@ -37,9 +38,9 @@ export const GROK_INTAKE_PROFILE = {
     "You make 20-second video ads for MakeYourAd.",
     "The human pastes an audience profile (GPT briefing, PAGE_3 JSON, Voiceover 25–30s script, camera-facing script). That paste is the brief. Do not rewrite the spoken copy. Do not invent a business. Ignore geofences, retail anchors, income, age, and PAGE_3 targeting — those are not in the ad.",
     "Call the MakeYourAd API. Do not drive the admin UI unless the API fails.",
-    "POST https://mya.geotargetus.dev/api/operator/bot/jobs with Authorization: Bearer <the operator token already in your notes>. JSON body: {\"profile\":\"<the entire paste>\",\"generate\":true}. Optional: \"email\" (delivery), \"direction\" (one-line remake note, e.g. minimal on-screen text), \"videoDirection\" (shot list / camera beats — or leave it off and we parse [VISUAL:] / camera notes from the paste), \"references\" (owner/job-site photos as data URLs or /api/files URLs from POST /api/operator/uploads). Multipart also works: profile text + references=@photo.jpg.",
+    "POST https://mya.geotargetus.dev/api/operator/bot/jobs with Authorization: Bearer <the operator token already in your notes>. JSON body: {\"profile\":\"<the entire paste>\",\"generate\":true}. Optional: \"email\" (delivery), \"direction\" (one-line remake note, e.g. minimal on-screen text), \"videoDirection\" (shot list / camera beats — or leave it off and we parse [VISUAL:] / camera notes from the paste), \"endCard\" / \"lowerThird\" (exact on-screen lines, or parse [END CARD:] / [LOWER THIRD:]), \"references\" (owner/job-site photos as data URLs or /api/files URLs from POST /api/operator/uploads). Multipart also works: profile text + references=@photo.jpg.",
     "When the human attaches photos (owner headshot, van, pool, job site), you MUST send them as references. Do not invent faces, vans, or job sites. Upload files to this app — do not host them on pastebins.",
-    "Only 20-second spots. Never start 12s or 40s. Never send a delivery email. Never refund. Never remake unless the human asks. Remake with POST /api/operator/bot/jobs/<orderId>/remake and generate:true — that always starts a new still (new stillUrl). Existing reference photos stay on the order. Optional direction can ask for minimal on-screen text (business name + city only) while keeping the spoken VO. Do not rewrite spoken copy. Video uses the parsed or supplied videoDirection shot list; stills do not burn that shot list as captions.",
+    "Only 20-second spots. Never start 12s or 40s. Never send a delivery email. Never refund. Never remake unless the human asks. Remake with POST /api/operator/bot/jobs/<orderId>/remake and generate:true — that always starts a new still (new stillUrl). Existing reference photos stay on the order. Optional direction can ask for minimal on-screen text (business name + city only) while keeping the spoken VO. Do not rewrite spoken copy. Video uses the parsed or supplied videoDirection shot list; stills do not burn that shot list as captions. When the brief names an end card or lower third, send endCard / lowerThird (or [END CARD:] / [LOWER THIRD:] tags). Exact type is composited after generation — do not rely on the model to letter Knoxville or a tagline.",
     "Reply with: business name, admin URL, generate cost (~$3.84 for one take: 2K still $0.08 + 15s 1080p $3.76). Then GET https://mya.geotargetus.dev/api/operator/bot/jobs/<orderId> every couple of minutes until jobStatus is done, error, or cancelled. GET also ticks/polls the video so a still-ready job does not sit idle. If it hangs, POST .../jobs/<orderId>/cancel. Look at phase (still|video), videoStarted, timedOut. If generate is already running, do not POST the job again.",
     "If the profile is missing Voiceover 25–30s, city/state, or business name, ask for those — do not guess.",
   ].join(" "),
@@ -165,6 +166,7 @@ export async function intakeFromProfile(
     generate?: boolean;
     direction?: string;
     videoDirection?: string;
+    textOverlay?: TextOverlaySpec | null;
     references?: ReferenceInput[];
   } = {},
 ) {
@@ -176,7 +178,15 @@ export async function intakeFromProfile(
     brief: profile,
     operatorDirection: opts.direction,
   });
-  const [order] = await createOrdersFromProfile(profile, email, { videoDirection: videoDirection || undefined });
+  const textOverlay = resolveTextOverlay({
+    explicit: opts.textOverlay,
+    videoDirection,
+    brief: profile,
+  });
+  const [order] = await createOrdersFromProfile(profile, email, {
+    videoDirection: videoDirection || undefined,
+    textOverlay: hasTextOverlay(textOverlay) ? textOverlay : undefined,
+  });
   if (opts.references?.length) {
     await attachReferencePhotos(order.id, opts.references, "bot");
   }
@@ -188,6 +198,7 @@ export async function intakeFromProfile(
       action: "start",
       direction: opts.direction?.trim() || undefined,
       videoDirection: videoDirection || undefined,
+      textOverlay: hasTextOverlay(textOverlay) ? textOverlay : undefined,
     });
     job = result.job;
   }
@@ -196,7 +207,13 @@ export async function intakeFromProfile(
 
 export async function remakeFromBot(
   orderId: string,
-  opts: { direction?: string; videoDirection?: string; generate?: boolean; references?: ReferenceInput[] } = {},
+  opts: {
+    direction?: string;
+    videoDirection?: string;
+    textOverlay?: TextOverlaySpec | null;
+    generate?: boolean;
+    references?: ReferenceInput[];
+  } = {},
 ) {
   const order = await getOrder(orderId);
   if (!order) throw new Error("Order not found");
@@ -211,8 +228,14 @@ export async function remakeFromBot(
     brief: order.brief,
     operatorDirection: note,
   });
-  if (opts.videoDirection?.trim()) {
-    await mergeOrderVideoDirection(orderId, opts.videoDirection.trim());
+  const textOverlay = resolveTextOverlay({
+    explicit: opts.textOverlay,
+    stored: prior?.textOverlay,
+    videoDirection,
+    brief: order.brief,
+  });
+  if (opts.videoDirection?.trim() || hasTextOverlay(textOverlay)) {
+    await mergeOrderVideoDirection(orderId, composeStoredVisual(opts.videoDirection?.trim() || videoDirection, textOverlay));
   }
   await remakeOrder(orderId, note, "bot");
   if (opts.generate !== false) {
@@ -222,6 +245,7 @@ export async function remakeFromBot(
       force: true,
       direction: note || undefined,
       videoDirection: videoDirection || undefined,
+      textOverlay: hasTextOverlay(textOverlay) ? textOverlay : undefined,
     });
     return summarizeJob(orderId, result.job);
   }
@@ -266,6 +290,10 @@ export async function summarizeJob(
     hasData: Boolean(a.data_url),
     url: a.external_url && /^https?:\/\//.test(a.external_url) ? a.external_url : signedFileUrl(origin, a.id, 7),
   }));
+  const overlay = resolveTextOverlay({
+    explicit: resolveTextOverlay({ brief: order.brief, videoDirection: loaded?.videoDirection }),
+    stored: loaded?.textOverlay,
+  });
   return {
     orderId: order.id,
     businessName: order.business_name,
@@ -287,6 +315,9 @@ export async function summarizeJob(
     stillUrl: slot?.stillUrl ?? null,
     videoUrl: slot?.videoUrl ?? loaded?.masterUrl ?? null,
     videoDirection: loaded?.videoDirection || resolveVideoDirection({ brief: order.brief }) || null,
+    endCard: overlay.endCard?.lines ?? null,
+    lowerThird: overlay.lowerThird?.lines ?? null,
+    overlaysApplied: Boolean(slot?.overlaysApplied),
     references,
     costCents: cost.totalCents,
     stills: cost.stills,

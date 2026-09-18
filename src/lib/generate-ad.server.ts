@@ -36,6 +36,16 @@ import {
   spokenScriptInstruction,
 } from "./generate-direction";
 import {
+  hasTextOverlay,
+  overlayHoldInstruction,
+  resolveTextOverlay,
+  shouldOverlayStill,
+  shouldOverlayVideo,
+  videoDirectionForModel,
+  type TextOverlaySpec,
+} from "./text-overlay";
+import { overlayStillFromUrl, overlayVideoFromUrl } from "./text-overlay.server";
+import {
   applyVideoDirection,
   pictureContinuityInstruction,
   resolveVideoDirection,
@@ -72,6 +82,7 @@ export type GenSlotState = {
   autoQc?: AutoQcResult;
   assetIds?: string[];
   remakes?: number;
+  overlaysApplied?: boolean;
 };
 
 export type TimelineClip = {
@@ -95,6 +106,7 @@ export type GenerationJob = {
   timeline?: TimelineClip[];
   direction?: string;
   videoDirection?: string;
+  textOverlay?: TextOverlaySpec;
   cost?: CostTally;
   floor?: { status: "watching" | "remaking" | "ready" | "needs_human"; note: string; remakes: number };
   slots: GenSlotState[];
@@ -321,9 +333,10 @@ async function enqueueSlotVideo(
           spokenForSlot(packet, slot.id),
           job.direction,
           job.videoDirection,
+          job.textOverlay,
         ),
       "video",
-      job.videoDirection,
+      videoDirectionForModel(job.videoDirection, job.textOverlay),
     ),
     slot.stillUrl,
     slot.duration,
@@ -409,22 +422,32 @@ function pickUrl(body: unknown): string | null {
   return null;
 }
 
-function continuityLine(packet: GenerationPacket, direction?: string, videoDirection?: string): string {
+function continuityLine(
+  packet: GenerationPacket,
+  direction?: string,
+  videoDirection?: string,
+  overlay?: TextOverlaySpec,
+): string {
   const i = packet.intake;
   const cta = packet.website_profile?.cta || "Call today";
   const music = TONE_PACKS[i.tone].music;
   const dir = direction?.trim();
-  const visual = videoDirection?.trim();
-  const endType = endCardTypeInstruction(onScreenMode(dir), {
-    businessName: i.businessName,
-    place: spokenPlace(i.city, i.state),
-    phone: i.phone,
-    cta,
-  });
+  const visual = videoDirectionForModel(videoDirection, overlay);
+  const endType = endCardTypeInstruction(
+    onScreenMode(dir),
+    {
+      businessName: i.businessName,
+      place: spokenPlace(i.city, i.state),
+      phone: i.phone,
+      cta,
+    },
+    overlay,
+  );
   return [
     pictureContinuityInstruction(visual),
     `Music: ${music} One bed from frame one through the last frame — never restart, never drop out on the end card.`,
     endType,
+    overlayHoldInstruction(overlay),
     "Never speak the ad length. Never say twelve seconds, twenty seconds, or forty seconds.",
     dir ? `DIRECTION CHANGE (this overrides the previous take): ${dir}` : "",
     "This is the customer-facing ad. Do not mention geofences, grocery or retail anchors, household income, age ranges, pilates studios, golf communities, or any media-buy targeting.",
@@ -446,11 +469,13 @@ function stillPrompt(
   ratio: string,
   direction?: string,
   videoDirection?: string,
+  overlay?: TextOverlaySpec,
 ) {
   const i = packet.intake;
   const site = packet.website_profile;
   const mode = onScreenMode(direction);
   const directedOpen = stillUsesDirectedOpening(videoDirection);
+  const visual = videoDirectionForModel(videoDirection, overlay);
   const lines = [
     `Photoreal local-business advertisement still, ${ratio}, cinematic, natural light.`,
     `Business: ${i.businessName}, ${i.category_label} in ${spokenPlace(i.city, i.state)}.`,
@@ -466,13 +491,15 @@ function stillPrompt(
     referencePromptBlock(packet.assets.filter((a) => a.kind === "logo" || a.kind === "upload")),
     `No watermarks, no agency slogans, no UI chrome.`,
     `Never say twelve seconds, twenty seconds, forty seconds, or any runtime.`,
-    continuityLine(packet, direction, videoDirection),
+    continuityLine(packet, direction, videoDirection, overlay),
   ];
   if (slot.id === "end_card" || slot.id === "static") {
     lines.push(
-      mode === "minimal-endcard"
-        ? `On-screen type, clean and readable: ${i.businessName}. ${spokenPlace(i.city, i.state)}. No voiceover paragraph. Never letter the state (not U.T.).`
-        : `On-screen type, clean and readable: ${i.businessName}. ${spokenPlace(i.city, i.state)}. ${i.phone}. CTA: ${site?.cta || "Call today"}. Never letter the state (not U.T.).`,
+      hasTextOverlay(overlay)
+        ? "Leave a clean plate for exact end-card type. Do not letter any words — type is composited after generation."
+        : mode === "minimal-endcard"
+          ? `On-screen type, clean and readable: ${i.businessName}. ${spokenPlace(i.city, i.state)}. No voiceover paragraph. Never letter the state (not U.T.).`
+          : `On-screen type, clean and readable: ${i.businessName}. ${spokenPlace(i.city, i.state)}. ${i.phone}. CTA: ${site?.cta || "Call today"}. Never letter the state (not U.T.).`,
     );
   }
   if (slot.id === "hook" || slot.id.startsWith("body")) {
@@ -490,7 +517,7 @@ function stillPrompt(
     if (line) lines.push(spokenScriptInstruction(line, mode));
   }
   if (slot.id === "mascot" && i.mascotDescription) lines.push(`Mascot: ${i.mascotDescription}`);
-  return applyVideoDirection(lines.filter(Boolean).join("\n"), "still", videoDirection);
+  return applyVideoDirection(lines.filter(Boolean).join("\n"), "still", visual);
 }
 
 function motionPrompt(
@@ -502,9 +529,11 @@ function motionPrompt(
   spokenLine?: string,
   direction?: string,
   videoDirection?: string,
+  overlay?: TextOverlaySpec,
 ) {
   const mode = onScreenMode(direction);
   const directed = stillUsesDirectedOpening(videoDirection);
+  const visual = videoDirectionForModel(videoDirection, overlay);
   const talking =
     slot.id === "hook" || slot.id.startsWith("body")
       ? [
@@ -527,9 +556,10 @@ function motionPrompt(
       `Photoreal, no morphing logos, no extra text, no watermarks.`,
       `Never say twelve seconds, twenty seconds, forty seconds, or any runtime. Hard cut when the line is done.`,
       "Do not mention geofences, grocery or retail anchors, or media-buy targeting.",
+      overlayHoldInstruction(overlay),
     ].join(" "),
     "video",
-    videoDirection,
+    visual,
   );
 }
 
@@ -539,6 +569,7 @@ function imagineStillPrompt(
   ratio: string,
   direction?: string,
   videoDirection?: string,
+  overlay?: TextOverlaySpec,
 ) {
   const i = packet.intake;
   const site = packet.website_profile;
@@ -559,9 +590,11 @@ function imagineStillPrompt(
   if (site?.about) parts.push(site.about.slice(0, 220));
   if (slot.id === "end_card" || slot.id === "static") {
     parts.push(
-      mode === "minimal-endcard"
-        ? `Put clean readable type on screen: ${i.businessName}. ${spokenPlace(i.city, i.state)}. No voiceover paragraph. Write the full state name, never UT or U.T.`
-        : `Put clean readable type on screen: ${i.businessName}. ${spokenPlace(i.city, i.state)}. ${i.phone}. ${site?.cta || "Call today"}. Write the full state name, never UT or U.T.`,
+      hasTextOverlay(overlay)
+        ? "Leave a clean plate for exact end-card type. Do not letter any words — type is composited after generation."
+        : mode === "minimal-endcard"
+          ? `Put clean readable type on screen: ${i.businessName}. ${spokenPlace(i.city, i.state)}. No voiceover paragraph. Write the full state name, never UT or U.T.`
+          : `Put clean readable type on screen: ${i.businessName}. ${spokenPlace(i.city, i.state)}. ${i.phone}. ${site?.cta || "Call today"}. Write the full state name, never UT or U.T.`,
     );
   }
   if (slot.id === "hook") {
@@ -581,7 +614,8 @@ function imagineStillPrompt(
   if (refs) parts.push(refs);
   parts.push("Use the real business. No celebrity, no watermark, no UI chrome, no agency slogan.");
   parts.push("Do not mention geofences, grocery or retail anchors, household income, age ranges, pilates studios, golf communities, or any media-buy targeting.");
-  return applyVideoDirection(parts.join(" "), "still", videoDirection);
+  parts.push(overlayHoldInstruction(overlay));
+  return applyVideoDirection(parts.filter(Boolean).join(" "), "still", videoDirectionForModel(videoDirection, overlay));
 }
 
 function imagineMotionPrompt(
@@ -593,6 +627,7 @@ function imagineMotionPrompt(
   spokenLine?: string,
   direction?: string,
   videoDirection?: string,
+  overlay?: TextOverlaySpec,
 ) {
   const pack = TONE_PACKS[tone];
   const mode = onScreenMode(direction);
@@ -620,9 +655,10 @@ function imagineMotionPrompt(
       "Photoreal, no morphing logos, no extra text, no watermarks.",
       "Never say twelve seconds, twenty seconds, forty seconds, or any runtime. Hard cut when the line is done.",
       "Do not mention geofences, grocery or retail anchors, or media-buy targeting.",
+      overlayHoldInstruction(overlay),
     ].join(" "),
     "video",
-    videoDirection,
+    videoDirectionForModel(videoDirection, overlay),
   );
 }
 
@@ -877,6 +913,7 @@ function emptySlotMedia(slot: GenSlotState) {
   slot.videoRequestId = undefined;
   slot.videoStartedAt = undefined;
   slot.claimedAt = undefined;
+  slot.overlaysApplied = undefined;
   slot.error = undefined;
   slot.status = "queued";
   slot.autoQc = undefined;
@@ -971,8 +1008,9 @@ export async function applyFloorDecision(order: OrderRow, job: GenerationJob, sl
     if (slot.stillPrompt && !slot.stillPrompt.includes(note)) slot.stillPrompt += add;
     if (slot.motionPrompt && !slot.motionPrompt.includes(note)) slot.motionPrompt += add;
     if (job.videoDirection) {
-      if (slot.stillPrompt) slot.stillPrompt = applyVideoDirection(slot.stillPrompt, "still", job.videoDirection);
-      if (slot.motionPrompt) slot.motionPrompt = applyVideoDirection(slot.motionPrompt, "video", job.videoDirection);
+      const visual = videoDirectionForModel(job.videoDirection, job.textOverlay);
+      if (slot.stillPrompt) slot.stillPrompt = applyVideoDirection(slot.stillPrompt, "still", visual);
+      if (slot.motionPrompt) slot.motionPrompt = applyVideoDirection(slot.motionPrompt, "video", visual);
     }
     await discardSlotAssets(order.id, slot, job);
     emptySlotMedia(slot);
@@ -1089,8 +1127,9 @@ export async function regenSlot(
     if (slot.motionPrompt && !slot.motionPrompt.includes(extra)) slot.motionPrompt += add;
   }
   if (job.videoDirection) {
-    if (slot.stillPrompt) slot.stillPrompt = applyVideoDirection(slot.stillPrompt, "still", job.videoDirection);
-    if (slot.motionPrompt) slot.motionPrompt = applyVideoDirection(slot.motionPrompt, "video", job.videoDirection);
+    const visual = videoDirectionForModel(job.videoDirection, job.textOverlay);
+    if (slot.stillPrompt) slot.stillPrompt = applyVideoDirection(slot.stillPrompt, "still", visual);
+    if (slot.motionPrompt) slot.motionPrompt = applyVideoDirection(slot.motionPrompt, "video", visual);
   }
   const loc = pronunciationNote(order.city, order.state);
   if ((slot.id === "hook" || slot.id.startsWith("body")) && slot.motionPrompt && !slot.motionPrompt.includes("Never spell the state")) {
@@ -1156,6 +1195,23 @@ export async function assembleMaster(
         targetSeconds: stitch.durationSeconds,
       });
     }
+    if (hasTextOverlay(job.textOverlay) && !job.slots.some((s) => s.overlaysApplied && s.id !== "mascot")) {
+      try {
+        const { overlayVideoBuffer } = await import("./text-overlay.server");
+        const overlaid = await overlayVideoBuffer(buf, job.textOverlay!, {
+          durationHint: stitch.durationSeconds,
+        });
+        buf = overlaid.buffer;
+        await appendEvent(orderId, "generate", "Exact type composited on the stitched master.", "admin");
+      } catch (err) {
+        await appendEvent(
+          orderId,
+          "generate",
+          `Master overlay skipped · ${err instanceof Error ? err.message : "composite failed"}`,
+          "admin",
+        );
+      }
+    }
     const dataUrl = `data:video/mp4;base64,${buf.toString("base64")}`;
     const attached = await attachGen(orderId, stitch.filename, null, "video/mp4", "delivery", dataUrl);
     job.masterUrl = assetViewUrl(origin, attached.id, dataUrl);
@@ -1201,11 +1257,17 @@ function initJob(
   engine: GenEngine,
   direction?: string,
   videoDirection?: string,
+  overlay?: TextOverlaySpec,
 ): GenerationJob {
   const now = new Date().toISOString();
   const ratio = packet.aspect_ratio_priority[0] ?? "9:16";
   const visual = videoDirection?.trim() || resolveVideoDirection({ brief: packet.intake.brief });
-  const extra = continuityLine(packet, direction, visual);
+  const textOverlay = resolveTextOverlay({
+    explicit: overlay,
+    videoDirection: visual,
+    brief: packet.intake.brief,
+  });
+  const extra = continuityLine(packet, direction, visual, textOverlay);
   return {
     status: "running",
     engine,
@@ -1213,14 +1275,15 @@ function initJob(
     updatedAt: now,
     direction: direction?.trim() || undefined,
     videoDirection: visual || undefined,
+    textOverlay: hasTextOverlay(textOverlay) ? textOverlay : undefined,
     slots: packet.recipe.slots.map((s) => {
       const target = slotSeconds(s.duration);
       const duration = engine === "imagine" ? imagineSeconds(s.duration) : apiVideoSeconds(target);
       const spoken = spokenForSlot(packet, s.id);
       const still =
         (engine === "imagine"
-          ? imagineStillPrompt(packet, s, ratio, direction, visual)
-          : stillPrompt(packet, s, ratio, direction, visual)) +
+          ? imagineStillPrompt(packet, s, ratio, direction, visual, textOverlay)
+          : stillPrompt(packet, s, ratio, direction, visual, textOverlay)) +
         " " +
         extra;
       const motion =
@@ -1235,6 +1298,7 @@ function initJob(
                   spoken,
                   direction,
                   visual,
+                  textOverlay,
                 )
               : motionPrompt(
                   s,
@@ -1245,6 +1309,7 @@ function initJob(
                   spoken,
                   direction,
                   visual,
+                  textOverlay,
                 )) +
             " " +
             extra
@@ -1312,6 +1377,48 @@ async function attachGen(
 function assetViewUrl(origin: string, assetId: string, dataUrl: string | null | undefined): string {
   if (dataUrl && dataUrl.startsWith("data:") && dataUrl.length < 1_500_000) return dataUrl;
   return signedFileUrl(origin, assetId, 30);
+}
+
+async function applyExactOverlays(opts: {
+  orderId: string;
+  slot: GenSlotState;
+  job: GenerationJob;
+  origin: string;
+  kind: "still" | "video";
+  url: string;
+}): Promise<{ url: string; dataUrl?: string; applied: boolean }> {
+  const spec = opts.job.textOverlay;
+  if (!hasTextOverlay(spec) || opts.slot.overlaysApplied) {
+    return { url: opts.url, applied: false };
+  }
+  try {
+    if (opts.kind === "still") {
+      if (!shouldOverlayStill(opts.slot.id)) return { url: opts.url, applied: false };
+      const overlaid = await overlayStillFromUrl(opts.url, spec!, "endCard");
+      if (!overlaid) return { url: opts.url, applied: false };
+      const dataUrl = `data:${overlaid.mime};base64,${overlaid.buffer.toString("base64")}`;
+      opts.slot.overlaysApplied = true;
+      await appendEvent(opts.orderId, "generate", `Exact end-card type composited on ${opts.slot.label}.`, "grok");
+      return { url: dataUrl, dataUrl, applied: true };
+    }
+    if (!shouldOverlayVideo(opts.slot.id)) return { url: opts.url, applied: false };
+    const overlaid = await overlayVideoFromUrl(opts.url, spec!, {
+      durationHint: opts.slot.duration ?? opts.slot.targetSeconds ?? 15,
+    });
+    if (!overlaid) return { url: opts.url, applied: false };
+    const dataUrl = `data:video/mp4;base64,${overlaid.buffer.toString("base64")}`;
+    opts.slot.overlaysApplied = true;
+    await appendEvent(opts.orderId, "generate", `Exact end-card / lower-third type composited on ${opts.slot.label}.`, "grok");
+    return { url: dataUrl, dataUrl, applied: true };
+  } catch (err) {
+    await appendEvent(
+      opts.orderId,
+      "generate",
+      `Overlay pass skipped · ${err instanceof Error ? err.message : "composite failed"}`,
+      "grok",
+    );
+    return { url: opts.url, applied: false };
+  }
 }
 
 function claimIsFresh(slot: GenSlotState): boolean {
@@ -1434,17 +1541,28 @@ export async function completeImagineSlot(opts: {
   const filename = opts.filename.replace(/[^\w.\-]+/g, "-").slice(0, 120) || `${slot.id}-gen.bin`;
 
   if (opts.kind === "still") {
+    const sourceUrl = opts.dataUrl || opts.url || "";
+    const overlaid = sourceUrl
+      ? await applyExactOverlays({
+          orderId: opts.orderId,
+          slot,
+          job,
+          origin: opts.origin,
+          kind: "still",
+          url: sourceUrl,
+        })
+      : { url: sourceUrl, dataUrl: opts.dataUrl, applied: false };
     const attached = await attachGen(
       opts.orderId,
       filename.endsWith(".jpg") || filename.endsWith(".png") || filename.endsWith(".webp")
         ? filename
         : `${slot.id}-gen.jpg`,
-      opts.url ?? null,
+      overlaid.applied ? null : opts.url ?? null,
       mime,
       slot.duration ? "still" : "delivery",
-      opts.dataUrl,
+      overlaid.dataUrl ?? opts.dataUrl,
     );
-    slot.stillUrl = assetViewUrl(opts.origin, attached.id, opts.dataUrl);
+    slot.stillUrl = assetViewUrl(opts.origin, attached.id, overlaid.dataUrl ?? opts.dataUrl);
     trackAsset(slot, attached.id);
     slot.claimedAt = undefined;
     slot.error = undefined;
@@ -1463,8 +1581,26 @@ export async function completeImagineSlot(opts: {
         : filename.endsWith(".mp4")
           ? filename
           : `${slot.id}-gen.mp4`;
-    const attached = await attachGen(opts.orderId, outName, opts.url ?? null, mime, "delivery", opts.dataUrl);
-    slot.videoUrl = assetViewUrl(opts.origin, attached.id, opts.dataUrl);
+    const sourceUrl = opts.dataUrl || opts.url || "";
+    const overlaid = sourceUrl
+      ? await applyExactOverlays({
+          orderId: opts.orderId,
+          slot,
+          job,
+          origin: opts.origin,
+          kind: "video",
+          url: sourceUrl,
+        })
+      : { url: sourceUrl, dataUrl: opts.dataUrl, applied: false };
+    const attached = await attachGen(
+      opts.orderId,
+      outName,
+      overlaid.applied ? null : opts.url ?? null,
+      mime,
+      "delivery",
+      overlaid.dataUrl ?? opts.dataUrl,
+    );
+    slot.videoUrl = assetViewUrl(opts.origin, attached.id, overlaid.dataUrl ?? opts.dataUrl);
     trackAsset(slot, attached.id);
     slot.status = "done";
     slot.claimedAt = undefined;
@@ -1492,7 +1628,13 @@ const tickLocks = new Map<string, Promise<unknown>>();
 
 export async function tickGeneration(
   orderId: string,
-  opts: { action: "start" | "tick"; force?: boolean; direction?: string; videoDirection?: string },
+  opts: {
+    action: "start" | "tick";
+    force?: boolean;
+    direction?: string;
+    videoDirection?: string;
+    textOverlay?: TextOverlaySpec;
+  },
 ): Promise<{ job: GenerationJob; order: OrderRow }> {
   const run = () => runWithOrder(orderId, () => tickGenerationLocked(orderId, opts));
   const prev = tickLocks.get(orderId) ?? Promise.resolve();
@@ -1509,7 +1651,13 @@ export async function tickGeneration(
 
 async function tickGenerationLocked(
   orderId: string,
-  opts: { action: "start" | "tick"; force?: boolean; direction?: string; videoDirection?: string },
+  opts: {
+    action: "start" | "tick";
+    force?: boolean;
+    direction?: string;
+    videoDirection?: string;
+    textOverlay?: TextOverlaySpec;
+  },
 ): Promise<{ job: GenerationJob; order: OrderRow }> {
   const engine = generationEngine();
   if (engine === "xai" && !apiKey()) {
@@ -1559,7 +1707,19 @@ async function tickGenerationLocked(
         brief: order.brief,
         operatorDirection: opts.direction || job?.direction,
       });
-      job = initJob(packet, engine, opts.direction?.trim() || job?.direction, videoDirection);
+      const textOverlay = resolveTextOverlay({
+        explicit: opts.textOverlay,
+        stored: job?.textOverlay,
+        videoDirection,
+        brief: order.brief,
+      });
+      job = initJob(
+        packet,
+        engine,
+        opts.direction?.trim() || job?.direction,
+        videoDirection,
+        textOverlay,
+      );
       await saveGeneration(orderId, job);
       const via = engine === "imagine" ? "SuperGrok Imagine" : "xAI API";
       await appendEvent(orderId, "generate", `Started generation · ${job.slots.length} slots · ${via}.`, "grok");
@@ -1635,12 +1795,21 @@ async function tickGenerationLocked(
       if (packetAssets.some((a) => a.kind === "logo" || a.kind === "upload") && refs.uris.length === 0) {
         throw new Error("Reference photos are on this order but none could be sent to the image model.");
       }
-      const stillBase = slot.stillPrompt || stillPrompt(packet, recipeSlot, ratio, job.direction, job.videoDirection);
+      const stillBase = slot.stillPrompt || stillPrompt(packet, recipeSlot, ratio, job.direction, job.videoDirection, job.textOverlay);
       const url = await generateStill(
         refs.used.length ? `${stillBase}\n${referencePromptBlock(refs.used)}` : stillBase,
         refs.uris,
       );
-      slot.stillUrl = url;
+      const origin = env("APP_ORIGIN") || "https://mya.geotargetus.dev";
+      const overlaidStill = await applyExactOverlays({
+        orderId,
+        slot,
+        job,
+        origin,
+        kind: "still",
+        url,
+      });
+      slot.stillUrl = overlaidStill.url;
       job.cost = addImage(job.cost ?? emptyCost(), refs.uris.length > 0);
       if (refs.uris.length) {
         await appendEvent(
@@ -1650,7 +1819,15 @@ async function tickGenerationLocked(
           "grok",
         );
       }
-      const stillAst = await attachGen(orderId, `${slot.id}-gen.jpg`, url, "image/jpeg", slot.duration ? "still" : "delivery");
+      const stillAst = await attachGen(
+        orderId,
+        `${slot.id}-gen.jpg`,
+        overlaidStill.applied ? null : url,
+        "image/jpeg",
+        slot.duration ? "still" : "delivery",
+        overlaidStill.dataUrl,
+      );
+      if (overlaidStill.applied) slot.stillUrl = assetViewUrl(origin, stillAst.id, overlaidStill.dataUrl);
       trackAsset(slot, stillAst.id);
       slot.claimedAt = undefined;
       if (!slot.duration) {
@@ -1678,9 +1855,26 @@ async function tickGenerationLocked(
         const last = await pollVideo(slot.videoRequestId);
         const done = last.status === "done" || last.status === "completed" || last.status === "succeeded";
         if (done && last.url) {
-          slot.videoUrl = last.url;
+          const origin = env("APP_ORIGIN") || "https://mya.geotargetus.dev";
+          const overlaidVideo = await applyExactOverlays({
+            orderId,
+            slot,
+            job,
+            origin,
+            kind: "video",
+            url: last.url,
+          });
+          slot.videoUrl = overlaidVideo.url;
           slot.status = "done";
-          const vidAst = await attachGen(orderId, `${slot.id}-gen.mp4`, last.url, "video/mp4", "delivery");
+          const vidAst = await attachGen(
+            orderId,
+            `${slot.id}-gen.mp4`,
+            overlaidVideo.applied ? null : last.url,
+            "video/mp4",
+            "delivery",
+            overlaidVideo.dataUrl,
+          );
+          if (overlaidVideo.applied) slot.videoUrl = assetViewUrl(origin, vidAst.id, overlaidVideo.dataUrl);
           trackAsset(slot, vidAst.id);
           await appendEvent(orderId, "generate", `Clip ready · ${slot.label}.`, "grok");
           await qcAndFloor(order, job, slot);

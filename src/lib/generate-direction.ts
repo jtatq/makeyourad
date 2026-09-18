@@ -28,7 +28,12 @@ export function motionScriptInstruction(script: string, mode: OnScreenMode): str
 export function endCardTypeInstruction(
   mode: OnScreenMode,
   bits: { businessName: string; place: string; phone: string; cta: string },
+  overlay?: { endCard?: { lines: string[] } | null; lowerThird?: { lines: string[] } | null } | null,
 ): string {
+  const hasOverlay = Boolean(overlay?.endCard?.lines.length || overlay?.lowerThird?.lines.length);
+  if (hasOverlay) {
+    return "In the last three seconds the camera holds on a clean plate. Do not letter any words on screen — exact end-card and lower-third type will be composited after generation. Leave a clear lower-third band and a clean last-three-second hold.";
+  }
   if (mode === "minimal-endcard") {
     return `In the last three seconds the camera holds and clean type fades on: ${bits.businessName}. ${bits.place}. Do not letter the spoken script. No paragraph of voiceover on screen.`;
   }

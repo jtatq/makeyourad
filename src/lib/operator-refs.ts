@@ -1,5 +1,14 @@
 import { safeFilename, safeMime } from "./filename.ts";
+import { specFromFields, type TextOverlaySpec } from "./text-overlay.ts";
 import { readVideoDirectionField } from "./video-direction.ts";
+
+function overlayFromBody(body: Record<string, unknown>): TextOverlaySpec | undefined {
+  const textOverlay = specFromFields(
+    body.endCard ?? body.end_card ?? body.endCardText ?? body.end_card_text,
+    body.lowerThird ?? body.lower_third ?? body.lowerThirds ?? body.lower_thirds ?? body.lowerThirdText,
+  );
+  return textOverlay.endCard || textOverlay.lowerThird ? textOverlay : undefined;
+}
 
 export const MAX_BOT_REFERENCES = 8;
 export const MAX_REFERENCE_DATA_URL = 2_400_000;
@@ -22,6 +31,9 @@ export type OperatorJobPayload = {
   generate: boolean;
   direction?: string;
   videoDirection?: string;
+  endCard?: string | string[];
+  lowerThird?: string | string[];
+  textOverlay?: TextOverlaySpec;
   references: ReferenceInput[];
 };
 
@@ -127,12 +139,16 @@ export function parseOperatorJobJson(body: Record<string, unknown>): OperatorJob
       : typeof body.note === "string"
         ? body.note
         : undefined;
+  const textOverlay = overlayFromBody(body);
   return {
     profile,
     email,
     generate: parseGenerateFlag(body.generate, true),
     direction,
     videoDirection: readVideoDirectionField(body),
+    endCard: textOverlay?.endCard?.lines,
+    lowerThird: textOverlay?.lowerThird?.lines,
+    textOverlay,
     references: collectReferencesFromBody(body),
   };
 }
@@ -155,6 +171,10 @@ export async function parseOperatorJobForm(form: FormData): Promise<OperatorJobP
     readText(form.get("visualDirection")) ??
     readText(form.get("shotList")) ??
     readText(form.get("cameraDirection"));
+  const textOverlay = overlayFromBody({
+    endCard: readText(form.get("endCard")) ?? readText(form.get("end_card")),
+    lowerThird: readText(form.get("lowerThird")) ?? readText(form.get("lower_third")),
+  });
   const references: ReferenceInput[] = [];
 
   for (const [key, value] of form.entries()) {
@@ -183,6 +203,9 @@ export async function parseOperatorJobForm(form: FormData): Promise<OperatorJobP
     generate: parseGenerateFlag(form.get("generate"), true),
     direction,
     videoDirection,
+    endCard: textOverlay?.endCard?.lines,
+    lowerThird: textOverlay?.lowerThird?.lines,
+    textOverlay,
     references,
   };
 }

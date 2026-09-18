@@ -45,6 +45,20 @@ describe("on-screen text direction", () => {
     assert.match(end, /Heber City, Utah/);
     assert.doesNotMatch(end, /435-555-0100/);
     assert.doesNotMatch(end, /Call today/);
+
+    const composited = endCardTypeInstruction(
+      "minimal-endcard",
+      {
+        businessName: "Knoxville Chamber",
+        place: "Knoxville, Tennessee",
+        phone: "865-555-0100",
+        cta: "Join us",
+      },
+      { endCard: { lines: ["Knoxville Chamber", "KnoxvilleChamber.com"] }, lowerThird: null },
+    );
+    assert.match(composited, /composited after generation/);
+    assert.doesNotMatch(composited, /Knowillo|Knoxvillo/);
+    assert.doesNotMatch(composited, /clean type fades on: Knoxville Chamber/);
   });
 });
 
