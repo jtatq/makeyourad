@@ -262,10 +262,10 @@ export function videoDirectionForModel(videoDirection?: string | null, spec?: Te
     .map((raw) => {
       const line = raw.trim();
       if (END_CARD_TAG.test(line) || END_CARD_LABEL.test(line)) {
-        return "End card: hold a clean plate — no on-screen letters (type composited after generation).";
+        return "End card: hold a clean plate — no on-screen letters, phones, digits, addresses, or invented logos (type composited after generation).";
       }
       if (LOWER_THIRD_TAG.test(line) || LOWER_THIRD_LABEL.test(line)) {
-        return "Lower third: leave a clear name-title band — no on-screen letters (type composited after generation).";
+        return "Lower third: leave a clear name-title band — no on-screen letters, phones, digits, or invented captions (type composited after generation).";
       }
       return raw;
     })
@@ -275,9 +275,9 @@ export function videoDirectionForModel(videoDirection?: string | null, spec?: Te
 export function overlayHoldInstruction(spec?: TextOverlaySpec | null): string {
   if (!hasTextOverlay(spec)) return "";
   return [
-    "Do not letter end-card or lower-third copy, captions, or a paragraph of type.",
+    "Do not letter end-card or lower-third copy, captions, phones, digits, addresses, logos, or a paragraph of type.",
     "Exact brand type is composited after generation — leave a clean lower-third band and a clean last-three-second hold.",
-    "Never invent spelling (not Knowillo, not Knoxvillo).",
+    "Clean plate only: no invented phone numbers, fake digits, digit scrap, addresses, captions, or gibberish lettering (not Knowillo, not Knoxvillo).",
   ].join(" ");
 }
 

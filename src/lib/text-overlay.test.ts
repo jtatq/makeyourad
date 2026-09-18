@@ -123,14 +123,28 @@ describe("exact string rendering", () => {
       assert.equal(overlaySvgContainsExact(svg, line), true, `missing ${line}`);
     }
     assert.doesNotMatch(svg, /Knowillo|Knoxvillo/);
-    assert.match(overlayHoldInstruction(spec), /composited after generation/);
+    const hold = overlayHoldInstruction(spec);
+    assert.match(hold, /composited after generation/);
+    assert.match(hold, /Clean plate only/);
+    assert.match(hold, /phone numbers/);
+    assert.match(hold, /digits/);
+    assert.match(hold, /gibberish lettering/);
+    assert.match(hold, /digit scrap/);
+    assert.doesNotMatch(hold, /865-555-0100/);
     assert.match(overlayTags(spec), /\[END CARD:\] Knoxville Chamber/);
     const model = videoDirectionForModel(
-      "End card: Knoxville Chamber / Innovation. Prosperity. Knoxville. / KnoxvilleChamber.com",
+      "End card: Knoxville Chamber / Innovation. Prosperity. Knoxville. / KnoxvilleChamber.com\nLower third: Larisa Brass | Director of Innovation",
       spec,
     );
     assert.match(model, /no on-screen letters/);
+    assert.match(model, /phones/);
+    assert.match(model, /digits/);
+    assert.match(model, /invented logos/);
+    assert.match(model, /invented captions/);
     assert.doesNotMatch(model, /Innovation\. Prosperity\. Knoxville\./);
+    assert.doesNotMatch(model, /Larisa Brass/);
+    assert.equal(overlayHoldInstruction(null), "");
+    assert.equal(overlayHoldInstruction({ endCard: null, lowerThird: null }), "");
   });
 
   it("composites exact end-card lines onto a still", async () => {

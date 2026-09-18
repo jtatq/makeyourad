@@ -31,9 +31,11 @@ import {
 import {
   endCardTypeInstruction,
   motionScriptInstruction,
+  noInventedOnScreenTypeInstruction,
   onScreenMode,
   shouldReinitGeneration,
   spokenScriptInstruction,
+  stillEndCardTypeInstruction,
 } from "./generate-direction";
 import {
   hasTextOverlay,
@@ -334,6 +336,7 @@ async function enqueueSlotVideo(
           job.direction,
           job.videoDirection,
           job.textOverlay,
+          order.phone,
         ),
       "video",
       videoDirectionForModel(job.videoDirection, job.textOverlay),
@@ -448,6 +451,7 @@ function continuityLine(
     `Music: ${music} One bed from frame one through the last frame — never restart, never drop out on the end card.`,
     endType,
     overlayHoldInstruction(overlay),
+    noInventedOnScreenTypeInstruction(i.phone, overlay),
     "Never speak the ad length. Never say twelve seconds, twenty seconds, or forty seconds.",
     dir ? `DIRECTION CHANGE (this overrides the previous take): ${dir}` : "",
     "This is the customer-facing ad. Do not mention geofences, grocery or retail anchors, household income, age ranges, pilates studios, golf communities, or any media-buy targeting.",
@@ -490,16 +494,22 @@ function stillPrompt(
     `Use the real business. Do not invent a different company or a celebrity.`,
     referencePromptBlock(packet.assets.filter((a) => a.kind === "logo" || a.kind === "upload")),
     `No watermarks, no agency slogans, no UI chrome.`,
+    noInventedOnScreenTypeInstruction(i.phone, overlay),
     `Never say twelve seconds, twenty seconds, forty seconds, or any runtime.`,
     continuityLine(packet, direction, videoDirection, overlay),
   ];
   if (slot.id === "end_card" || slot.id === "static") {
     lines.push(
-      hasTextOverlay(overlay)
-        ? "Leave a clean plate for exact end-card type. Do not letter any words — type is composited after generation."
-        : mode === "minimal-endcard"
-          ? `On-screen type, clean and readable: ${i.businessName}. ${spokenPlace(i.city, i.state)}. No voiceover paragraph. Never letter the state (not U.T.).`
-          : `On-screen type, clean and readable: ${i.businessName}. ${spokenPlace(i.city, i.state)}. ${i.phone}. CTA: ${site?.cta || "Call today"}. Never letter the state (not U.T.).`,
+      stillEndCardTypeInstruction(
+        mode,
+        {
+          businessName: i.businessName,
+          place: spokenPlace(i.city, i.state),
+          phone: i.phone,
+          cta: site?.cta || "Call today",
+        },
+        overlay,
+      ),
     );
   }
   if (slot.id === "hook" || slot.id.startsWith("body")) {
@@ -530,6 +540,7 @@ function motionPrompt(
   direction?: string,
   videoDirection?: string,
   overlay?: TextOverlaySpec,
+  phone?: string,
 ) {
   const mode = onScreenMode(direction);
   const directed = stillUsesDirectedOpening(videoDirection);
@@ -554,6 +565,7 @@ function motionPrompt(
       slot.role,
       `Tone: ${tone}. ${talking}`,
       `Photoreal, no morphing logos, no extra text, no watermarks.`,
+      noInventedOnScreenTypeInstruction(phone, overlay),
       `Never say twelve seconds, twenty seconds, forty seconds, or any runtime. Hard cut when the line is done.`,
       "Do not mention geofences, grocery or retail anchors, or media-buy targeting.",
       overlayHoldInstruction(overlay),
@@ -590,11 +602,16 @@ function imagineStillPrompt(
   if (site?.about) parts.push(site.about.slice(0, 220));
   if (slot.id === "end_card" || slot.id === "static") {
     parts.push(
-      hasTextOverlay(overlay)
-        ? "Leave a clean plate for exact end-card type. Do not letter any words — type is composited after generation."
-        : mode === "minimal-endcard"
-          ? `Put clean readable type on screen: ${i.businessName}. ${spokenPlace(i.city, i.state)}. No voiceover paragraph. Write the full state name, never UT or U.T.`
-          : `Put clean readable type on screen: ${i.businessName}. ${spokenPlace(i.city, i.state)}. ${i.phone}. ${site?.cta || "Call today"}. Write the full state name, never UT or U.T.`,
+      stillEndCardTypeInstruction(
+        mode,
+        {
+          businessName: i.businessName,
+          place: spokenPlace(i.city, i.state),
+          phone: i.phone,
+          cta: site?.cta || "Call today",
+        },
+        overlay,
+      ),
     );
   }
   if (slot.id === "hook") {
@@ -614,6 +631,7 @@ function imagineStillPrompt(
   if (refs) parts.push(refs);
   parts.push("Use the real business. No celebrity, no watermark, no UI chrome, no agency slogan.");
   parts.push("Do not mention geofences, grocery or retail anchors, household income, age ranges, pilates studios, golf communities, or any media-buy targeting.");
+  parts.push(noInventedOnScreenTypeInstruction(i.phone, overlay));
   parts.push(overlayHoldInstruction(overlay));
   return applyVideoDirection(parts.filter(Boolean).join(" "), "still", videoDirectionForModel(videoDirection, overlay));
 }
@@ -628,6 +646,7 @@ function imagineMotionPrompt(
   direction?: string,
   videoDirection?: string,
   overlay?: TextOverlaySpec,
+  phone?: string,
 ) {
   const pack = TONE_PACKS[tone];
   const mode = onScreenMode(direction);
@@ -653,6 +672,7 @@ function imagineMotionPrompt(
       pack.picture,
       talking,
       "Photoreal, no morphing logos, no extra text, no watermarks.",
+      noInventedOnScreenTypeInstruction(phone, overlay),
       "Never say twelve seconds, twenty seconds, forty seconds, or any runtime. Hard cut when the line is done.",
       "Do not mention geofences, grocery or retail anchors, or media-buy targeting.",
       overlayHoldInstruction(overlay),
@@ -1299,6 +1319,7 @@ function initJob(
                   direction,
                   visual,
                   textOverlay,
+                  packet.intake.phone,
                 )
               : motionPrompt(
                   s,
@@ -1310,6 +1331,7 @@ function initJob(
                   direction,
                   visual,
                   textOverlay,
+                  packet.intake.phone,
                 )) +
             " " +
             extra

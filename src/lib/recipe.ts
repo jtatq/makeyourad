@@ -34,7 +34,7 @@ export function aspectRatioPriority(platforms: Platform[]): AspectRatio[] {
 }
 
 const SPOT_ROLE =
-  "ONE CONTINUOUS SPOT. Same room, same person, same light, same music bed from first frame through the last. Speak the full script. In the last three seconds hold and super name, city (full state word), phone, CTA. Do not cut to a separate end-card graphic. Never say how long the ad is.";
+  "ONE CONTINUOUS SPOT. Same room, same person, same light, same music bed from first frame through the last. Speak the full script. In the last three seconds hold and super name and city (full state word). Super a phone only when a real number was provided — never invent digits, addresses, or contact scrap. Super CTA if provided. Do not cut to a separate end-card graphic. Never say how long the ad is.";
 
 export function recipeSlots(opts: {
   productId: ProductId;
