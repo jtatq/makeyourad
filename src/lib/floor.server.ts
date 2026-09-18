@@ -20,9 +20,11 @@ import {
   getOrder,
   listOrders,
   listReferenceAssets,
+  mergeOrderVideoDirection,
   remakeOrder,
 } from "./orders.server";
 import type { ReferenceInput } from "./operator-refs";
+import { resolveVideoDirection } from "./video-direction";
 import { estimateJobCost } from "./xai-cost";
 
 export const MAX_FLOOR_REMAKES = 1;
@@ -35,9 +37,9 @@ export const GROK_INTAKE_PROFILE = {
     "You make 20-second video ads for MakeYourAd.",
     "The human pastes an audience profile (GPT briefing, PAGE_3 JSON, Voiceover 25–30s script, camera-facing script). That paste is the brief. Do not rewrite the spoken copy. Do not invent a business. Ignore geofences, retail anchors, income, age, and PAGE_3 targeting — those are not in the ad.",
     "Call the MakeYourAd API. Do not drive the admin UI unless the API fails.",
-    "POST https://mya.geotargetus.dev/api/operator/bot/jobs with Authorization: Bearer <the operator token already in your notes>. JSON body: {\"profile\":\"<the entire paste>\",\"generate\":true}. Optional: \"email\" (delivery), \"direction\" (one-line visual change), \"references\" (owner/job-site photos as data URLs or /api/files URLs from POST /api/operator/uploads). Multipart also works: profile text + references=@photo.jpg.",
+    "POST https://mya.geotargetus.dev/api/operator/bot/jobs with Authorization: Bearer <the operator token already in your notes>. JSON body: {\"profile\":\"<the entire paste>\",\"generate\":true}. Optional: \"email\" (delivery), \"direction\" (one-line remake note, e.g. minimal on-screen text), \"videoDirection\" (shot list / camera beats — or leave it off and we parse [VISUAL:] / camera notes from the paste), \"references\" (owner/job-site photos as data URLs or /api/files URLs from POST /api/operator/uploads). Multipart also works: profile text + references=@photo.jpg.",
     "When the human attaches photos (owner headshot, van, pool, job site), you MUST send them as references. Do not invent faces, vans, or job sites. Upload files to this app — do not host them on pastebins.",
-    "Only 20-second spots. Never start 12s or 40s. Never send a delivery email. Never refund. Never remake unless the human asks. Remake with POST /api/operator/bot/jobs/<orderId>/remake and generate:true — that always starts a new still (new stillUrl). Existing reference photos stay on the order. Optional direction can ask for minimal on-screen text (business name + city only) while keeping the spoken VO.",
+    "Only 20-second spots. Never start 12s or 40s. Never send a delivery email. Never refund. Never remake unless the human asks. Remake with POST /api/operator/bot/jobs/<orderId>/remake and generate:true — that always starts a new still (new stillUrl). Existing reference photos stay on the order. Optional direction can ask for minimal on-screen text (business name + city only) while keeping the spoken VO. Do not rewrite spoken copy. Video uses the parsed or supplied videoDirection shot list; stills do not burn that shot list as captions.",
     "Reply with: business name, admin URL, generate cost (~$3.84 for one take: 2K still $0.08 + 15s 1080p $3.76). Then GET https://mya.geotargetus.dev/api/operator/bot/jobs/<orderId> every couple of minutes until jobStatus is done, error, or cancelled. GET also ticks/polls the video so a still-ready job does not sit idle. If it hangs, POST .../jobs/<orderId>/cancel. Look at phase (still|video), videoStarted, timedOut. If generate is already running, do not POST the job again.",
     "If the profile is missing Voiceover 25–30s, city/state, or business name, ask for those — do not guess.",
   ].join(" "),
@@ -158,12 +160,23 @@ export async function runBotTick(): Promise<{ work: BotWork | null; did: string 
 
 export async function intakeFromProfile(
   raw: string,
-  opts: { email?: string; generate?: boolean; direction?: string; references?: ReferenceInput[] } = {},
+  opts: {
+    email?: string;
+    generate?: boolean;
+    direction?: string;
+    videoDirection?: string;
+    references?: ReferenceInput[];
+  } = {},
 ) {
   const profile = raw.trim();
   if (profile.length < 40) throw new Error("Paste the full audience profile.");
   const email = (opts.email || operatorEmail()).trim();
-  const [order] = await createOrdersFromProfile(profile, email);
+  const videoDirection = resolveVideoDirection({
+    explicit: opts.videoDirection,
+    brief: profile,
+    operatorDirection: opts.direction,
+  });
+  const [order] = await createOrdersFromProfile(profile, email, { videoDirection: videoDirection || undefined });
   if (opts.references?.length) {
     await attachReferencePhotos(order.id, opts.references, "bot");
   }
@@ -174,6 +187,7 @@ export async function intakeFromProfile(
     const result = await tickGeneration(order.id, {
       action: "start",
       direction: opts.direction?.trim() || undefined,
+      videoDirection: videoDirection || undefined,
     });
     job = result.job;
   }
@@ -182,7 +196,7 @@ export async function intakeFromProfile(
 
 export async function remakeFromBot(
   orderId: string,
-  opts: { direction?: string; generate?: boolean; references?: ReferenceInput[] } = {},
+  opts: { direction?: string; videoDirection?: string; generate?: boolean; references?: ReferenceInput[] } = {},
 ) {
   const order = await getOrder(orderId);
   if (!order) throw new Error("Order not found");
@@ -190,6 +204,16 @@ export async function remakeFromBot(
     await attachReferencePhotos(orderId, opts.references, "bot");
   }
   const note = opts.direction?.trim() || null;
+  const prior = await loadGeneration(orderId);
+  const videoDirection = resolveVideoDirection({
+    explicit: opts.videoDirection,
+    stored: prior?.videoDirection,
+    brief: order.brief,
+    operatorDirection: note,
+  });
+  if (opts.videoDirection?.trim()) {
+    await mergeOrderVideoDirection(orderId, opts.videoDirection.trim());
+  }
   await remakeOrder(orderId, note, "bot");
   if (opts.generate !== false) {
     await resetGeneration(orderId);
@@ -197,6 +221,7 @@ export async function remakeFromBot(
       action: "start",
       force: true,
       direction: note || undefined,
+      videoDirection: videoDirection || undefined,
     });
     return summarizeJob(orderId, result.job);
   }
@@ -261,6 +286,7 @@ export async function summarizeJob(
       : null,
     stillUrl: slot?.stillUrl ?? null,
     videoUrl: slot?.videoUrl ?? loaded?.masterUrl ?? null,
+    videoDirection: loaded?.videoDirection || resolveVideoDirection({ brief: order.brief }) || null,
     references,
     costCents: cost.totalCents,
     stills: cost.stills,

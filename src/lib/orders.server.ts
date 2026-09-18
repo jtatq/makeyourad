@@ -14,6 +14,7 @@ import {
   signedFileUrl,
 } from "./operator-auth.server";
 import { spokenOnly } from "./script";
+import { composeStoredBrief, parseBriefLayers, resolveVideoDirection } from "./video-direction";
 import {
   MAX_BOT_REFERENCES,
   materializeReference,
@@ -478,10 +479,13 @@ export async function applyAudienceProfile(orderId: string, raw: string): Promis
   const order = await getOrder(orderId);
   if (!order) throw new Error("Order not found");
   const parsed = parseAudiencePaste(raw);
-  const brief = spokenOnly(scriptForProduct(parsed, order.product, ""));
-  if (brief.trim().length < 12) {
+  const rawScript = scriptForProduct(parsed, order.product, "") || raw;
+  const layers = parseBriefLayers(raw);
+  const spoken = spokenOnly(rawScript);
+  if (spoken.trim().length < 12) {
     throw new Error("This paste has no script for this product (12s social, 20s voiceover, or 40s camera-facing).");
   }
+  const brief = composeStoredBrief(spoken, layers.videoDirection);
   const sql = await getSql();
   await sql.query(
     `update orders set
@@ -505,20 +509,39 @@ export async function applyAudienceProfile(orderId: string, raw: string): Promis
       brief.slice(0, 16000),
     ],
   );
-  await appendEvent(orderId, "profile", "Audience profile applied. Scripts are now the spoken copy.", "admin");
+  await appendEvent(
+    orderId,
+    "profile",
+    layers.videoDirection
+      ? "Audience profile applied. Spoken copy kept; visual direction stored for the video pass."
+      : "Audience profile applied. Scripts are now the spoken copy.",
+    "admin",
+  );
   const next = await getOrder(orderId);
   if (!next) throw new Error("Order not found");
   return next;
 }
 
-export async function createOrdersFromProfile(raw: string, email: string): Promise<OrderRow[]> {
+export async function createOrdersFromProfile(
+  raw: string,
+  email: string,
+  opts?: { videoDirection?: string },
+): Promise<OrderRow[]> {
   const parsed = parseAudiencePaste(raw);
-  const brief = spokenOnly(
-    scriptForProduct(parsed, "video-20", "") || parsed.voiceoverScript || parsed.cameraScript || parsed.socialScript || "",
-  );
-  if (brief.length < 8) {
+  const rawScript =
+    scriptForProduct(parsed, "video-20", "") ||
+    parsed.voiceoverScript ||
+    parsed.cameraScript ||
+    parsed.socialScript ||
+    raw;
+  const spoken = spokenOnly(rawScript);
+  if (spoken.length < 8) {
     throw new Error("Need a Voiceover (25–30s) script in AD CONCEPTS. 12s and 40s jobs are off for now.");
   }
+  const brief = composeStoredBrief(
+    spoken,
+    resolveVideoDirection({ explicit: opts?.videoDirection, brief: raw }),
+  );
   const businessName =
     parsed.businessName ||
     (parsed.website
@@ -774,6 +797,21 @@ export async function flagOrder(id: string, note: string, actor = "operator"): P
   );
   await appendEvent(id, "needs_attention", note, actor);
   const next = await getOrder(id);
+  if (!next) throw new Error("Order not found");
+  return next;
+}
+
+export async function mergeOrderVideoDirection(orderId: string, videoDirection: string): Promise<OrderRow> {
+  const order = await getOrder(orderId);
+  if (!order) throw new Error("Order not found");
+  const visual = videoDirection.trim();
+  if (!visual) return order;
+  const spoken = spokenOnly(order.brief);
+  const brief = composeStoredBrief(spoken, visual).slice(0, 16000);
+  if (brief === order.brief) return order;
+  const sql = await getSql();
+  await sql.query(`update orders set brief = $2, updated_at = now() where id = $1`, [orderId, brief]);
+  const next = await getOrder(orderId);
   if (!next) throw new Error("Order not found");
   return next;
 }

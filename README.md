@@ -34,7 +34,7 @@ All routes require `Authorization: Bearer $OPERATOR_TOKEN`.
 - `GET /api/operator/orders?status=paid`
 - `GET /api/operator/orders/:id`
 - `GET /api/operator/orders/:id/packet`
-- `POST /api/operator/orders/:id/generate` body `{ "action": "start" | "tick", "force": false }` — queues a SuperGrok Imagine job (or ticks the xAI REST path if `GENERATION_ENGINE=xai`)
+- `POST /api/operator/orders/:id/generate` body `{ "action": "start" | "tick", "force": false, "direction": "...", "videoDirection": "..." }` — queues a SuperGrok Imagine job (or ticks the xAI REST path if `GENERATION_ENGINE=xai`). `videoDirection` is the visual shot list for the video pass; if omitted it is parsed from `[VISUAL:]` / camera notes in the brief.
 - `POST /api/operator/orders/:id/cancel` (aliases `/kill`, `/abort`) — stop a running generate so it cannot keep spending
 - `GET /api/operator/imagine/pending` — running Imagine jobs
 - `GET /api/operator/imagine/next` — claim the next still or clip
@@ -106,6 +106,51 @@ curl -sS -X POST "$ORIGIN/api/operator/bot/jobs/$ORDER_ID/remake" \
 ```
 
 `generate:true` (the default) **always starts a new still** — it clears the prior take and returns a new `stillUrl`. Attached reference photos are sent into `/images/edits` (not a text-only fallback). Direction may ask for **minimal on-screen text** (business name + city / end-card only); the spoken VO still uses the full script.
+
+### Second-pass video direction (shot list ≠ spoken VO)
+
+Briefs often mix a spoken Voiceover with camera notes (`[VISUAL:]`, `[SFX:]`, lower-thirds, end cards, "Open on… / Transition to…"). Those lines used to flatten into one prompt, so the model treated the shot list as copy (or ignored it because the motion prompt said "one continuous shot").
+
+MakeYourAd now splits the paste:
+
+1. **First pass (still)** — spoken VO stays verbatim. Opening frame may follow the first visual beat. The shot list is **not** burned as on-screen captions. Reference photos still win for real faces/places.
+2. **Second pass (video / remake video)** — the visual beat sheet is applied strongly on `/videos/generations`. Spoken words are not rewritten. Directed transitions override the old one-room default.
+
+Bots can send `videoDirection` (aliases: `video_direction`, `visualDirection`, `shotList`, `cameraDirection`) or leave it off and rely on parsing. Job GET/create/remake responses include the resolved `videoDirection`.
+
+```bash
+# Create from a Voiceover + [VISUAL:] brief (parser splits spoken vs picture)
+curl -sS -X POST "$ORIGIN/api/operator/bot/jobs" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "profile": "Business Name: Knoxville Chamber\nBusiness Address: 17 Market Square, Knoxville, TN\n\nVoiceover 25–30 seconds\nYou didn'\''t build your business in a vacuum. You built it with grit, neighbors, and a city that shows up. Join us today.\n\n[VISUAL:] Open on downtown Knoxville skyline\n[VISUAL:] Transition to Market Square with Larisa Brass (Director of Innovation), tablet, welcoming nod\n[LOWER THIRD:] Larisa Brass | Director of Innovation\n[VISUAL:] Tight shot interacting / modern workspace\n[END CARD:] Knoxville Chamber logo + KnoxvilleChamber.com over Market Square\n[SFX:] City ambience",
+    "generate": true,
+    "direction": "Minimal on-screen text — business name and city only. Do not burn the VO as captions."
+  }'
+
+# Or supply the beat sheet explicitly (spoken profile stays the VO)
+curl -sS -X POST "$ORIGIN/api/operator/bot/jobs" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "profile": "Business Name: Knoxville Chamber\nBusiness Address: 17 Market Square, Knoxville, TN\n\nVoiceover 25–30 seconds\nYou didn'\''t build your business in a vacuum. Join us today.",
+    "videoDirection": "Open on downtown Knoxville skyline\nTransition to Market Square with Larisa Brass (Director of Innovation), tablet, welcoming nod\nLower third: Larisa Brass | Director of Innovation\nTight shot interacting / modern workspace\nEnd card: Knoxville Chamber logo + KnoxvilleChamber.com over Market Square",
+    "generate": true
+  }'
+
+# Remake: keep spoken VO, re-apply (or replace) the shot list on the video pass
+curl -sS -X POST "$ORIGIN/api/operator/bot/jobs/$ORDER_ID/remake" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "direction": "Minimal on-screen text — business name and city only.",
+    "videoDirection": "Open on downtown Knoxville skyline\nTransition to Market Square with Larisa Brass\nEnd card: Knoxville Chamber logo + KnoxvilleChamber.com",
+    "generate": true
+  }'
+```
+
+Spoken VO in that Knoxville example stays: "You didn't build your business… Join us today." The still does not letter the skyline / Market Square / lower-third list. The video prompt includes that shot list.
 
 Optional extra photos on remake: same `references` field or multipart files. Add photos to an existing job without remaking: `POST /api/operator/bot/jobs/:id/references` or `POST /api/operator/orders/:id/references`.
 
