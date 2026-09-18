@@ -174,15 +174,19 @@ export const adminGenerate = createServerFn({ method: "POST" })
       force: z.boolean().optional(),
       direction: z.string().max(2000).optional(),
       videoDirection: z.string().max(8000).optional(),
+      endCard: z.union([z.string(), z.array(z.string())]).optional(),
+      lowerThird: z.union([z.string(), z.array(z.string())]).optional(),
     }),
   )
   .handler(async ({ data }) => {
     requireAdmin();
+    const { specFromFields } = await import("./text-overlay");
     return tickGeneration(data.id, {
       action: data.action,
       force: data.force,
       direction: data.direction,
       videoDirection: data.videoDirection,
+      textOverlay: specFromFields(data.endCard, data.lowerThird),
     });
   });
 

@@ -132,6 +132,27 @@ describe("operator ref helpers", () => {
     assert.equal(aliased.videoDirection, "Tight shot interacting / modern workspace");
   });
 
+  it("reads explicit endCard / lowerThird without rewriting spoken profile", () => {
+    const profile = [
+      "Business Name: Knoxville Chamber",
+      "You didn't build your business in a vacuum. Join us today.",
+    ].join("\n");
+    const payload = parseOperatorJobJson({
+      profile,
+      generate: true,
+      endCard: ["Knoxville Chamber", "Innovation. Prosperity. Knoxville.", "KnoxvilleChamber.com"],
+      lowerThird: "Larisa Brass | Director of Innovation",
+    });
+    assert.match(payload.profile, /You didn't build your business/);
+    assert.deepEqual(payload.endCard, [
+      "Knoxville Chamber",
+      "Innovation. Prosperity. Knoxville.",
+      "KnoxvilleChamber.com",
+    ]);
+    assert.deepEqual(payload.lowerThird, ["Larisa Brass", "Director of Innovation"]);
+    assert.equal(payload.textOverlay?.endCard?.lines[0], "Knoxville Chamber");
+  });
+
   it("uses note as remake direction when direction is omitted", () => {
     const payload = parseOperatorJobJson({
       profile: "x".repeat(50),

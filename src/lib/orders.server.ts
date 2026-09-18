@@ -14,6 +14,7 @@ import {
   signedFileUrl,
 } from "./operator-auth.server";
 import { spokenOnly } from "./script";
+import { composeStoredVisual, type TextOverlaySpec } from "./text-overlay";
 import { composeStoredBrief, parseBriefLayers, resolveVideoDirection } from "./video-direction";
 import {
   MAX_BOT_REFERENCES,
@@ -525,7 +526,7 @@ export async function applyAudienceProfile(orderId: string, raw: string): Promis
 export async function createOrdersFromProfile(
   raw: string,
   email: string,
-  opts?: { videoDirection?: string },
+  opts?: { videoDirection?: string; textOverlay?: TextOverlaySpec | null },
 ): Promise<OrderRow[]> {
   const parsed = parseAudiencePaste(raw);
   const rawScript =
@@ -540,7 +541,10 @@ export async function createOrdersFromProfile(
   }
   const brief = composeStoredBrief(
     spoken,
-    resolveVideoDirection({ explicit: opts?.videoDirection, brief: raw }),
+    composeStoredVisual(
+      resolveVideoDirection({ explicit: opts?.videoDirection, brief: raw }),
+      opts?.textOverlay,
+    ),
   );
   const businessName =
     parsed.businessName ||
