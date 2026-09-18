@@ -1,6 +1,7 @@
 import { parseAudiencePaste, scriptForProduct } from "./briefing";
 import type { ProductId } from "./products";
 import { masterClips } from "./recipe";
+import { extractSpokenVoiceover } from "./video-direction";
 
 const DURATION_SPEAK =
   /\b(?:12|20|25|30|40|55|60)(?:\s*[–-]\s*(?:12|20|25|30|40|55|60))?\s*-?\s*seconds?\b/gi;
@@ -26,9 +27,9 @@ export function stripMediaBuy(text: string): string {
     .trim();
 }
 
-/** Strip duration labels so talent never says "twelve seconds" / "forty seconds". */
+/** Strip duration labels, media-buy, and visual/camera direction so talent never speaks the shot list. */
 export function spokenOnly(text: string): string {
-  return stripMediaBuy(text)
+  return extractSpokenVoiceover(text)
     .split("\n")
     .map((line) => {
       const trimmed = line.trim();

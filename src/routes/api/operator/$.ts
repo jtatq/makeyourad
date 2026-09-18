@@ -116,6 +116,7 @@ async function handle(request: Request, splat: string, method: "GET" | "POST") {
           email: body.email,
           generate: body.generate,
           direction: body.direction,
+          videoDirection: body.videoDirection,
           references: body.references,
         });
         return Response.json(result);
@@ -140,6 +141,7 @@ async function handle(request: Request, splat: string, method: "GET" | "POST") {
         return Response.json(
           await remakeFromBot(parts[2], {
             direction: body.direction,
+            videoDirection: body.videoDirection,
             generate: body.generate,
             references: body.references,
           }),
@@ -245,6 +247,15 @@ async function handle(request: Request, splat: string, method: "GET" | "POST") {
         const result = await tickGeneration(id, {
           action: body.action === "tick" ? "tick" : "start",
           force: Boolean(body.force),
+          direction: typeof body.direction === "string" ? body.direction : undefined,
+          videoDirection:
+            typeof body.videoDirection === "string"
+              ? body.videoDirection
+              : typeof body.video_direction === "string"
+                ? body.video_direction
+                : typeof body.shotList === "string"
+                  ? body.shotList
+                  : undefined,
         });
         return Response.json(result);
       }

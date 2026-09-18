@@ -1,4 +1,5 @@
 import { safeFilename, safeMime } from "./filename.ts";
+import { readVideoDirectionField } from "./video-direction.ts";
 
 export const MAX_BOT_REFERENCES = 8;
 export const MAX_REFERENCE_DATA_URL = 2_400_000;
@@ -20,6 +21,7 @@ export type OperatorJobPayload = {
   email?: string;
   generate: boolean;
   direction?: string;
+  videoDirection?: string;
   references: ReferenceInput[];
 };
 
@@ -130,6 +132,7 @@ export function parseOperatorJobJson(body: Record<string, unknown>): OperatorJob
     email,
     generate: parseGenerateFlag(body.generate, true),
     direction,
+    videoDirection: readVideoDirectionField(body),
     references: collectReferencesFromBody(body),
   };
 }
@@ -146,6 +149,12 @@ export async function parseOperatorJobForm(form: FormData): Promise<OperatorJobP
 
   const email = readText(form.get("email"));
   const direction = readText(form.get("direction")) ?? readText(form.get("note"));
+  const videoDirection =
+    readText(form.get("videoDirection")) ??
+    readText(form.get("video_direction")) ??
+    readText(form.get("visualDirection")) ??
+    readText(form.get("shotList")) ??
+    readText(form.get("cameraDirection"));
   const references: ReferenceInput[] = [];
 
   for (const [key, value] of form.entries()) {
@@ -173,6 +182,7 @@ export async function parseOperatorJobForm(form: FormData): Promise<OperatorJobP
     email,
     generate: parseGenerateFlag(form.get("generate"), true),
     direction,
+    videoDirection,
     references,
   };
 }

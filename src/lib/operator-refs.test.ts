@@ -27,6 +27,7 @@ describe("operator bot reference parsing", () => {
     });
     assert.equal(payload.generate, true);
     assert.equal(payload.direction, "Use Alan's face and the real pool.");
+    assert.equal(payload.videoDirection, undefined);
     assert.equal(payload.references.length, 3);
     assert.equal(payload.references[0]?.filename, "alan-owner.jpg");
     assert.equal(payload.references[2]?.kind, "logo");
@@ -105,6 +106,30 @@ describe("operator ref helpers", () => {
     assert.equal(inferReferenceKind("Logo.PNG"), "logo");
     assert.equal(inferReferenceKind("pool-1.jpg"), "upload");
     assert.equal(inferReferenceKind("face.jpg", "logo"), "logo");
+  });
+
+  it("reads videoDirection / shotList aliases without rewriting spoken profile", () => {
+    const profile = [
+      "Business Name: Knoxville Chamber",
+      "You didn't build your business in a vacuum. Join us today.",
+      "[VISUAL:] Open on downtown Knoxville skyline",
+    ].join("\n");
+    const payload = parseOperatorJobJson({
+      profile,
+      generate: true,
+      direction: "Minimal on-screen text — business name and city only.",
+      videoDirection:
+        "Open on downtown Knoxville skyline\nTransition to Market Square with Larisa Brass\nEnd card: Knoxville Chamber logo + KnoxvilleChamber.com",
+    });
+    assert.match(payload.profile, /You didn't build your business/);
+    assert.equal(payload.direction, "Minimal on-screen text — business name and city only.");
+    assert.match(payload.videoDirection ?? "", /Open on downtown Knoxville skyline/);
+    assert.match(payload.videoDirection ?? "", /KnoxvilleChamber\.com/);
+    const aliased = parseOperatorJobJson({
+      profile,
+      shot_list: "Tight shot interacting / modern workspace",
+    });
+    assert.equal(aliased.videoDirection, "Tight shot interacting / modern workspace");
   });
 
   it("uses note as remake direction when direction is omitted", () => {
