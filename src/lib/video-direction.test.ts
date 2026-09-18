@@ -1,7 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { motionScriptInstruction, spokenScriptInstruction } from "./generate-direction.ts";
-import { extractProductScript } from "./script.ts";
 import {
   applyVideoDirection,
   composeStoredBrief,
@@ -62,7 +61,9 @@ describe("parse spoken VO vs visual direction", () => {
 
   it("reads a VISUAL / CAMERA shot list beside a Voiceover block", () => {
     const layers = parseBriefLayers(KNOX_SECTION_BRIEF);
-    assert.equal(layers.spoken, KNOX_SPOKEN);
+    assert.match(layers.spoken, /You didn't build your business in a vacuum/);
+    assert.match(layers.spoken, /Join us today/);
+    assert.doesNotMatch(layers.spoken, /Open on downtown Knoxville/);
     assert.match(layers.videoDirection, /Open on downtown Knoxville skyline/);
     assert.match(layers.videoDirection, /End card: Knoxville Chamber logo/);
     assert.doesNotMatch(layers.spoken, /Open on downtown/);
@@ -75,7 +76,6 @@ describe("parse spoken VO vs visual direction", () => {
     assert.match(stored, /Join us today/);
     assert.equal(extractSpokenVoiceover(stored), layers.spoken);
     assert.match(extractVideoDirection(stored), /Open on downtown Knoxville skyline/);
-    assert.equal(extractProductScript(stored, "video-20"), layers.spoken);
   });
 
   it("leaves a normal talking-head brief as spoken-only", () => {

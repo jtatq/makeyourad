@@ -480,8 +480,8 @@ export async function applyAudienceProfile(orderId: string, raw: string): Promis
   if (!order) throw new Error("Order not found");
   const parsed = parseAudiencePaste(raw);
   const rawScript = scriptForProduct(parsed, order.product, "") || raw;
-  const layers = parseBriefLayers(`${raw}\n\n${rawScript}`);
-  const spoken = spokenOnly(layers.spoken || rawScript);
+  const layers = parseBriefLayers(raw);
+  const spoken = spokenOnly(rawScript);
   if (spoken.trim().length < 12) {
     throw new Error("This paste has no script for this product (12s social, 20s voiceover, or 40s camera-facing).");
   }
@@ -534,13 +534,13 @@ export async function createOrdersFromProfile(
     parsed.cameraScript ||
     parsed.socialScript ||
     raw;
-  const spoken = spokenOnly(parseBriefLayers(`${raw}\n\n${rawScript}`).spoken || rawScript);
+  const spoken = spokenOnly(rawScript);
   if (spoken.length < 8) {
     throw new Error("Need a Voiceover (25–30s) script in AD CONCEPTS. 12s and 40s jobs are off for now.");
   }
   const brief = composeStoredBrief(
     spoken,
-    resolveVideoDirection({ explicit: opts?.videoDirection, brief: `${raw}\n\n${rawScript}` }),
+    resolveVideoDirection({ explicit: opts?.videoDirection, brief: raw }),
   );
   const businessName =
     parsed.businessName ||

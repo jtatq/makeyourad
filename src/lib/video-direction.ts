@@ -13,11 +13,13 @@ const PRODUCT_SECTION_HEAD =
 const LEADING_LABEL = /^(?:12|20|40)\s*seconds?\s*[:\-–.]\s*/i;
 const MEDIA_BUY_LINE =
   /\b(geofenc|in-?market audience|household income|target women|primary (?:store|retail)|suggested additional|pilates studios|fitness and wellness|luxury residential|golf communit|media[- ]buy|seven miles|\$\d{2,3},\d{3}\+)\b/i;
+const INTAKE_FIELD =
+  /^(?:business\s+name|business\s+address|address|website|phone|category|city|state|email)\s*:/i;
 
 const SPOKEN_BRACKET =
-  /^\s*\[(?:VO|V\.?O\.?|VOICEOVER|VOICE[- ]?OVER|DIALOGUE|DIALOG|TALENT|SPOKEN|ANNCR|NARRATION|NARRATOR)\]\s*:?\s*(.*)$/i;
+  /^\s*\[(?:VO|V\.?O\.?|VOICEOVER|VOICE[- ]?OVER|DIALOGUE|DIALOG|TALENT|SPOKEN|ANNCR|NARRATION|NARRATOR):?\]\s*:?\s*(.*)$/i;
 const VISUAL_BRACKET =
-  /^\s*\[(?:VISUALS?|VIDEO|CAMERA|SHOTS?|B-?ROLL|GFX|GRAPHICS?|LOWER[- ]?THIRDS?|END[- ]?CARDS?|SUPER|SFX|MUSIC|OS(?:\s*ACTION)?)\]\s*:?\s*(.*)$/i;
+  /^\s*\[(?:VISUALS?|VIDEO|CAMERA|SHOTS?|B-?ROLL|GFX|GRAPHICS?|LOWER[- ]?THIRDS?|END[- ]?CARDS?|SUPER|SFX|MUSIC|OS(?:\s*ACTION)?):?\]\s*:?\s*(.*)$/i;
 
 const VISUAL_SECTION =
   /^(?:visuals?(?:\s*[/|&]\s*camera)?|visual\s+(?:direction|notes?|beats?)|shot\s+lists?|camera(?:\s+notes?|\s+direction)?|b-?roll|picture(?:\s+direction)?|scene\s+direction|video\s+direction)\b(?:\s*[—\-–:])?\s*$/i;
@@ -91,7 +93,7 @@ export function parseBriefLayers(brief: string): BriefLayers {
       if (mode !== "auto") mode = "auto";
       continue;
     }
-    if (MEDIA_BUY_LINE.test(line) || PRODUCT_SECTION_HEAD.test(line)) continue;
+    if (MEDIA_BUY_LINE.test(line) || PRODUCT_SECTION_HEAD.test(line) || INTAKE_FIELD.test(line)) continue;
 
     const spokenTag = line.match(SPOKEN_BRACKET);
     if (spokenTag) {
