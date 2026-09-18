@@ -214,6 +214,7 @@ export function stillOpeningHint(videoDirection?: string | null): string {
     "FIRST PASS STILL — opening frame only.",
     first ? `Open on this picture (composition, not captions): ${first}` : "",
     "Do not letter the visual shot list, camera notes, [VISUAL:] / [SFX:] lines, or the full beat sheet on screen.",
+    "Do not invent phone numbers, digits, addresses, or gibberish lettering on this still.",
     "If this opening frame has no person, do not force a talking-head into the still.",
     "Honor reference photos for any real person or place that appears in this frame.",
   ]

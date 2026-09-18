@@ -126,11 +126,13 @@ describe("video prompt includes the shot list", () => {
     assert.match(still, /FIRST PASS STILL — opening frame only/);
     assert.match(still, /Open on downtown Knoxville skyline/);
     assert.match(still, /Do not letter the visual shot list/);
+    assert.match(still, /Do not invent phone numbers, digits, addresses, or gibberish lettering/);
     assert.doesNotMatch(still, /SECOND PASS VIDEO/);
     assert.equal(stillUsesDirectedOpening(visual), true);
     const hint = stillOpeningHint(visual);
     assert.doesNotMatch(hint, /Captions match/);
     assert.match(hint, /not captions/);
+    assert.match(hint, /Do not invent phone numbers/);
     assert.ok((videoShotListInstruction(visual).match(/Transition to Market Square/g) ?? []).length >= 1);
   });
 
