@@ -19,6 +19,10 @@ const MINIMAL_TEXT =
 
 const PLACEHOLDER_PHONE = /see\s+website|n\/a\b|none\b|unknown|not\s+provided|tbd\b/i;
 
+/** Image-model prompt cap. Leave headroom under the 4096 hard limit. */
+export const IMAGE_STILL_PROMPT_BUDGET = 3500;
+export const IMAGE_STILL_PROMPT_HARD_MAX = 4096;
+
 export function onScreenMode(direction?: string | null): OnScreenMode {
   const d = direction?.trim() ?? "";
   if (!d) return "script-captions";
@@ -37,36 +41,33 @@ export function looksLikeOnScreenPhone(phone?: string | null): boolean {
   return digits.length >= 7 && digits.length <= 15;
 }
 
-export const NO_INVENTED_ONSCREEN_TYPE =
-  "Never invent phone numbers, fake digits, addresses, captions, logos, or gibberish lettering. Do not burn digit scrap, placeholder numbers, or nonsense words.";
+/** Single short anti-fabrication line. Inject once — do not restate in other helpers. */
+export const ON_SCREEN_TYPE_GUARD = "No invented phones, digits, addresses, or gibberish type.";
 
-export function noInventedOnScreenTypeInstruction(phone?: string | null, overlay?: OverlayTypeHint): string {
+export function onScreenTypeGuard(phone?: string | null, overlay?: OverlayTypeHint): string {
   if (hasOverlayType(overlay)) {
-    return `Clean plate only. ${NO_INVENTED_ONSCREEN_TYPE} Exact brand type is composited after generation — leave space; do not letter a contact footer.`;
+    return "Clean plate — no phones, digits, or invented type. Overlay is composited after generation.";
   }
   if (looksLikeOnScreenPhone(phone)) {
-    return `${NO_INVENTED_ONSCREEN_TYPE} If a phone appears on screen it must be exactly ${phone!.trim()} — never a different number.`;
+    return `${ON_SCREEN_TYPE_GUARD} If a phone appears use only ${phone!.trim()}.`;
   }
-  return `${NO_INVENTED_ONSCREEN_TYPE} Do not show a phone number unless the brief provided a real one.`;
+  return `${ON_SCREEN_TYPE_GUARD} Show a phone only if the brief gave a real one.`;
 }
 
-function phoneGuard(phone?: string | null): string {
-  if (looksLikeOnScreenPhone(phone)) {
-    return `Do not invent a different phone number. If a phone must appear it must be exactly ${phone!.trim()}.`;
-  }
-  return "Do not invent a phone number, fake digits, an address, or extra contact scrap.";
-}
+/** @deprecated Use onScreenTypeGuard — kept as the one injected still/video guard. */
+export const noInventedOnScreenTypeInstruction = onScreenTypeGuard;
+export const NO_INVENTED_ONSCREEN_TYPE = ON_SCREEN_TYPE_GUARD;
 
 export function spokenScriptInstruction(script: string, mode: OnScreenMode): string {
   if (mode === "minimal-endcard") {
-    return `Mouth and SPEAK this script verbatim, do not paraphrase: "${script}". Do not burn those words as on-screen captions, lower-thirds, or a paragraph of type. On-screen text is business name and city only. Do not invent phone numbers, digits, addresses, or gibberish lettering.`;
+    return `Mouth and SPEAK this script verbatim, do not paraphrase: "${script}". Do not burn those words as on-screen captions, lower-thirds, or a paragraph of type. On-screen text is business name and city only.`;
   }
   return `Mouth the exact full script: "${script}". Captions match those words. This is the script, not an idea.`;
 }
 
 export function motionScriptInstruction(script: string, mode: OnScreenMode): string {
   if (mode === "minimal-endcard") {
-    return `Speak this script verbatim, do not paraphrase: "${script}". Do not burn the spoken words as captions. Do not invent phone numbers, digits, addresses, or gibberish lettering on screen.`;
+    return `Speak this script verbatim, do not paraphrase: "${script}". Do not burn the spoken words as captions.`;
   }
   return `Speak this script verbatim, do not paraphrase: "${script}". Captions match exactly.`;
 }
@@ -77,34 +78,29 @@ export function endCardTypeInstruction(
   overlay?: OverlayTypeHint,
 ): string {
   if (hasOverlayType(overlay)) {
-    return [
-      "In the last three seconds the camera holds on a clean plate.",
-      "Do not letter any words, phone numbers, digits, addresses, captions, logos, or gibberish on screen — exact end-card and lower-third type will be composited after generation.",
-      "Leave a clear lower-third band and a clean last-three-second hold for composited type.",
-      NO_INVENTED_ONSCREEN_TYPE,
-    ].join(" ");
+    return "Last 3s: hold a clean plate for composited type.";
   }
   if (mode === "minimal-endcard") {
-    return `In the last three seconds the camera holds and clean type fades on: ${bits.businessName}. ${bits.place}. Do not letter the spoken script. No paragraph of voiceover on screen. ${phoneGuard(bits.phone)} ${NO_INVENTED_ONSCREEN_TYPE}`;
+    return `Last 3s: ${bits.businessName}. ${bits.place}. Do not letter the spoken script.`;
   }
   const phoneFade = looksLikeOnScreenPhone(bits.phone) ? `${bits.phone.trim()}. ` : "";
-  return `In the last three seconds the camera holds and clean type fades on: ${bits.businessName}. ${bits.place}. ${phoneFade}${bits.cta}. ${phoneGuard(bits.phone)}`;
+  return `Last 3s: ${bits.businessName}. ${bits.place}. ${phoneFade}${bits.cta}.`;
 }
 
-/** End-card / static still copy. Overlay plates stay blank; models do not invent contact scrap. */
+/** End-card / static still copy. Overlay plates stay blank; the shared guard covers fabrication. */
 export function stillEndCardTypeInstruction(
   mode: OnScreenMode,
   bits: EndCardBits,
   overlay?: OverlayTypeHint,
 ): string {
   if (hasOverlayType(overlay)) {
-    return "Leave a clean plate for exact end-card type. Do not letter any words, phone numbers, digits, addresses, captions, logos, or gibberish — type is composited after generation.";
+    return "Clean plate for composited end-card.";
   }
   if (mode === "minimal-endcard") {
-    return `On-screen type, clean and readable: ${bits.businessName}. ${bits.place}. No voiceover paragraph. Never letter the state (not U.T.). ${phoneGuard(bits.phone)}`;
+    return `Type: ${bits.businessName}. ${bits.place}.`;
   }
   const phoneFade = looksLikeOnScreenPhone(bits.phone) ? `${bits.phone.trim()}. ` : "";
-  return `On-screen type, clean and readable: ${bits.businessName}. ${bits.place}. ${phoneFade}CTA: ${bits.cta}. Never letter the state (not U.T.). ${phoneGuard(bits.phone)}`;
+  return `Type: ${bits.businessName}. ${bits.place}. ${phoneFade}${bits.cta}.`;
 }
 
 /** start + force always begins a new job — remake must not keep a prior still/video. */

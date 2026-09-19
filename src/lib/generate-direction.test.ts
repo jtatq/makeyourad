@@ -5,8 +5,9 @@ import {
   looksLikeOnScreenPhone,
   motionScriptInstruction,
   noInventedOnScreenTypeInstruction,
-  NO_INVENTED_ONSCREEN_TYPE,
+  ON_SCREEN_TYPE_GUARD,
   onScreenMode,
+  onScreenTypeGuard,
   shouldReinitGeneration,
   spokenScriptInstruction,
   stillEndCardTypeInstruction,
@@ -33,13 +34,13 @@ describe("on-screen text direction", () => {
     assert.match(spoken, /I'm Alan/);
     assert.match(spoken, /Do not burn those words as on-screen captions/);
     assert.match(spoken, /business name and city only/);
-    assert.match(spoken, /Do not invent phone numbers, digits, addresses, or gibberish lettering/);
     assert.doesNotMatch(spoken, /Captions match those words/);
+    assert.doesNotMatch(spoken, /No invented phones/);
 
     const motion = motionScriptInstruction(script, "minimal-endcard");
     assert.match(motion, /Speak this script verbatim/);
     assert.match(motion, /Do not burn the spoken words as captions/);
-    assert.match(motion, /Do not invent phone numbers, digits, addresses, or gibberish lettering on screen/);
+    assert.doesNotMatch(motion, /No invented phones/);
 
     const end = endCardTypeInstruction("minimal-endcard", {
       businessName: "Alan's Pool Service",
@@ -49,10 +50,9 @@ describe("on-screen text direction", () => {
     });
     assert.match(end, /Alan's Pool Service/);
     assert.match(end, /Heber City, Utah/);
-    assert.match(end, /clean type fades on: Alan's Pool Service\. Heber City, Utah\./);
     assert.doesNotMatch(end, /Call today/);
-    assert.match(end, /If a phone must appear it must be exactly 435-555-0100/);
-    assert.match(end, /Never invent phone numbers, fake digits, addresses, captions, logos, or gibberish lettering/);
+    assert.doesNotMatch(end, /435-555-0100/);
+    assert.doesNotMatch(end, /No invented phones/);
 
     const noPhone = endCardTypeInstruction("minimal-endcard", {
       businessName: "Knoxville Chamber",
@@ -61,7 +61,6 @@ describe("on-screen text direction", () => {
       cta: "Join us",
     });
     assert.match(noPhone, /Knoxville Chamber/);
-    assert.match(noPhone, /Do not invent a phone number, fake digits, an address, or extra contact scrap/);
     assert.doesNotMatch(noPhone, /See website/);
     assert.doesNotMatch(noPhone, /Join us/);
     assert.doesNotMatch(noPhone, /\d{3}/);
@@ -73,8 +72,7 @@ describe("on-screen text direction", () => {
       cta: "Join us",
     });
     assert.match(captionsNoPhone, /Join us/);
-    assert.match(captionsNoPhone, /Do not invent a phone number/);
-    assert.doesNotMatch(captionsNoPhone, /clean type fades on: Knoxville Chamber\. Knoxville, Tennessee\. \d/);
+    assert.doesNotMatch(captionsNoPhone, /Last 3s: Knoxville Chamber\. Knoxville, Tennessee\. \d/);
 
     const composited = endCardTypeInstruction(
       "minimal-endcard",
@@ -86,40 +84,37 @@ describe("on-screen text direction", () => {
       },
       { endCard: { lines: ["Knoxville Chamber", "KnoxvilleChamber.com"] }, lowerThird: null },
     );
-    assert.match(composited, /composited after generation/);
-    assert.match(composited, /clean plate/);
-    assert.match(composited, /phone numbers/);
-    assert.match(composited, /digits/);
-    assert.match(composited, /addresses/);
-    assert.match(composited, /gibberish/);
-    assert.match(composited, /Never invent phone numbers/);
-    assert.doesNotMatch(composited, /Knowillo|Knoxvillo/);
+    assert.match(composited, /clean plate for composited type/);
     assert.doesNotMatch(composited, /865-555-0100/);
-    assert.doesNotMatch(composited, /clean type fades on: Knoxville Chamber/);
+    assert.doesNotMatch(composited, /Knoxville Chamber\. Knoxville/);
+    assert.ok(composited.length < 80, `end-card overlay line should stay short: ${composited.length}`);
   });
 
-  it("does not treat placeholder phones as on-screen type, and bans invented contact scrap", () => {
+  it("uses one short guard for invented phones, and never letters a phone on overlay plates", () => {
     assert.equal(looksLikeOnScreenPhone("435-555-0100"), true);
     assert.equal(looksLikeOnScreenPhone("(865) 246-2000"), true);
     assert.equal(looksLikeOnScreenPhone("See website"), false);
     assert.equal(looksLikeOnScreenPhone(""), false);
     assert.equal(looksLikeOnScreenPhone("n/a"), false);
 
-    const overlay = noInventedOnScreenTypeInstruction("865-555-0100", {
+    const overlay = onScreenTypeGuard("865-555-0100", {
       endCard: { lines: ["Knoxville Chamber"] },
       lowerThird: null,
     });
-    assert.match(overlay, /Clean plate only/);
+    assert.equal(overlay, noInventedOnScreenTypeInstruction("865-555-0100", { endCard: { lines: ["Knoxville Chamber"] }, lowerThird: null }));
+    assert.match(overlay, /Clean plate/);
     assert.match(overlay, /composited after generation/);
+    assert.match(overlay, /phones/);
+    assert.match(overlay, /digits/);
     assert.doesNotMatch(overlay, /865-555-0100/);
-    assert.match(overlay, /contact footer/);
+    assert.ok(overlay.length < 120, `overlay guard too long: ${overlay.length}`);
 
-    const allowed = noInventedOnScreenTypeInstruction("435-555-0100");
-    assert.match(allowed, /exactly 435-555-0100/);
-    assert.match(allowed, new RegExp(NO_INVENTED_ONSCREEN_TYPE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    const allowed = onScreenTypeGuard("435-555-0100");
+    assert.match(allowed, /exactly 435-555-0100|use only 435-555-0100/);
+    assert.match(allowed, new RegExp(ON_SCREEN_TYPE_GUARD.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 
-    const none = noInventedOnScreenTypeInstruction("See website");
-    assert.match(none, /Do not show a phone number unless the brief provided a real one/);
+    const none = onScreenTypeGuard("See website");
+    assert.match(none, /Show a phone only if the brief gave a real one/);
     assert.doesNotMatch(none, /See website/);
   });
 
@@ -134,11 +129,7 @@ describe("on-screen text direction", () => {
       },
       { endCard: { lines: ["Knoxville Chamber", "KnoxvilleChamber.com"] }, lowerThird: null },
     );
-    assert.match(overlay, /clean plate/);
-    assert.match(overlay, /composited after generation/);
-    assert.match(overlay, /phone numbers/);
-    assert.match(overlay, /digits/);
-    assert.match(overlay, /gibberish/);
+    assert.match(overlay, /Clean plate for composited end-card/);
     assert.doesNotMatch(overlay, /865-555-0100/);
     assert.doesNotMatch(overlay, /Join us/);
 
@@ -150,7 +141,6 @@ describe("on-screen text direction", () => {
     });
     assert.match(minimal, /Alan's Pool Service/);
     assert.match(minimal, /Heber City, Utah/);
-    assert.match(minimal, /Do not invent a phone number/);
     assert.doesNotMatch(minimal, /Call today/);
   });
 });

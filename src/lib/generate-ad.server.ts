@@ -11,12 +11,10 @@ import {
   type OrderRow,
 } from "./orders.server";
 import { buildPacket, type GenerationPacket } from "./prompts/compiler";
-import { TONE_PACKS } from "./prompts/tones";
 import { masterClips, type SlotId } from "./recipe";
 import { inspectClip, pronunciationNote, type AutoQcResult } from "./auto-qc.server";
-import { spokenPlace } from "./intake";
 import { extractProductScript, slotScriptLine } from "./script";
-import { PRODUCTS, type Tone } from "./products";
+import { PRODUCTS } from "./products";
 import { stitchMasterFile } from "./stitch.server";
 import { classifyXaiPath, readLimitHeaders, recordXaiCall, runWithOrder } from "./xai-limits.server";
 import { addImage, addVideo, emptyCost, estimateJobCost, type CostTally } from "./xai-cost";
@@ -28,31 +26,23 @@ import {
   orderOpenForGeneratePump,
   VIDEO_WAIT_MS,
 } from "./generation-progress";
-import {
-  endCardTypeInstruction,
-  motionScriptInstruction,
-  noInventedOnScreenTypeInstruction,
-  onScreenMode,
-  shouldReinitGeneration,
-  spokenScriptInstruction,
-  stillEndCardTypeInstruction,
-} from "./generate-direction";
+import { shouldReinitGeneration } from "./generate-direction";
 import {
   hasTextOverlay,
-  overlayHoldInstruction,
   resolveTextOverlay,
   shouldOverlayStill,
   shouldOverlayVideo,
   videoDirectionForModel,
   type TextOverlaySpec,
 } from "./text-overlay";
-import { overlayStillFromUrl, overlayVideoFromUrl } from "./text-overlay.server";
 import {
-  applyVideoDirection,
-  pictureContinuityInstruction,
-  resolveVideoDirection,
-  stillUsesDirectedOpening,
-} from "./video-direction";
+  composeImagineStillPrompt,
+  composeMotionPrompt,
+  composeStillPrompt,
+  type PromptPacket,
+} from "./generate-prompts";
+import { overlayStillFromUrl, overlayVideoFromUrl } from "./text-overlay.server";
+import { applyVideoDirection, resolveVideoDirection } from "./video-direction";
 import {
   compactDataUrlForModel,
   imageGenerationAttempts,
@@ -326,17 +316,14 @@ async function enqueueSlotVideo(
   const vidId = await startVideo(
     applyVideoDirection(
       slot.motionPrompt ||
-        motionPrompt(
+        composeMotionPrompt(
+          toPromptPacket(packet, slot.id),
           recipeSlot,
           slot.duration,
-          order.tone,
-          order.city,
-          order.state,
           spokenForSlot(packet, slot.id),
           job.direction,
           job.videoDirection,
           job.textOverlay,
-          order.phone,
         ),
       "video",
       videoDirectionForModel(job.videoDirection, job.textOverlay),
@@ -425,41 +412,6 @@ function pickUrl(body: unknown): string | null {
   return null;
 }
 
-function continuityLine(
-  packet: GenerationPacket,
-  direction?: string,
-  videoDirection?: string,
-  overlay?: TextOverlaySpec,
-): string {
-  const i = packet.intake;
-  const cta = packet.website_profile?.cta || "Call today";
-  const music = TONE_PACKS[i.tone].music;
-  const dir = direction?.trim();
-  const visual = videoDirectionForModel(videoDirection, overlay);
-  const endType = endCardTypeInstruction(
-    onScreenMode(dir),
-    {
-      businessName: i.businessName,
-      place: spokenPlace(i.city, i.state),
-      phone: i.phone,
-      cta,
-    },
-    overlay,
-  );
-  return [
-    pictureContinuityInstruction(visual),
-    `Music: ${music} One bed from frame one through the last frame — never restart, never drop out on the end card.`,
-    endType,
-    overlayHoldInstruction(overlay),
-    noInventedOnScreenTypeInstruction(i.phone, overlay),
-    "Never speak the ad length. Never say twelve seconds, twenty seconds, or forty seconds.",
-    dir ? `DIRECTION CHANGE (this overrides the previous take): ${dir}` : "",
-    "This is the customer-facing ad. Do not mention geofences, grocery or retail anchors, household income, age ranges, pilates studios, golf communities, or any media-buy targeting.",
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
 function spokenForSlot(packet: GenerationPacket, slotId: string): string {
   if (slotId === "mascot" || slotId === "static" || slotId === "end_card") {
     return slotScriptLine(packet.intake.brief, packet.product, slotId);
@@ -467,219 +419,14 @@ function spokenForSlot(packet: GenerationPacket, slotId: string): string {
   return extractProductScript(packet.intake.brief, packet.product);
 }
 
-function stillPrompt(
-  packet: GenerationPacket,
-  slot: GenerationPacket["recipe"]["slots"][number],
-  ratio: string,
-  direction?: string,
-  videoDirection?: string,
-  overlay?: TextOverlaySpec,
-) {
-  const i = packet.intake;
-  const site = packet.website_profile;
-  const mode = onScreenMode(direction);
-  const directedOpen = stillUsesDirectedOpening(videoDirection);
-  const visual = videoDirectionForModel(videoDirection, overlay);
-  const lines = [
-    `Photoreal local-business advertisement still, ${ratio}, cinematic, natural light.`,
-    `Business: ${i.businessName}, ${i.category_label} in ${spokenPlace(i.city, i.state)}.`,
-    `Slot: ${slot.label}. ${slot.role}`,
-    `Tone: ${i.tone}. ${packet.recipe.structure}`,
-    extractProductScript(i.brief, packet.product)
-      ? `EXACT SCRIPT (speak these words, do not paraphrase): ${extractProductScript(i.brief, packet.product)}`
-      : "",
-    site?.tagline ? `Tagline: ${site.tagline}` : "",
-    site?.services?.length ? `Services: ${site.services.slice(0, 6).join(", ")}` : "",
-    site?.about ? `About: ${site.about.slice(0, 280)}` : "",
-    `Use the real business. Do not invent a different company or a celebrity.`,
-    referencePromptBlock(packet.assets.filter((a) => a.kind === "logo" || a.kind === "upload")),
-    `No watermarks, no agency slogans, no UI chrome.`,
-    noInventedOnScreenTypeInstruction(i.phone, overlay),
-    `Never say twelve seconds, twenty seconds, forty seconds, or any runtime.`,
-    continuityLine(packet, direction, videoDirection, overlay),
-  ];
-  if (slot.id === "end_card" || slot.id === "static") {
-    lines.push(
-      stillEndCardTypeInstruction(
-        mode,
-        {
-          businessName: i.businessName,
-          place: spokenPlace(i.city, i.state),
-          phone: i.phone,
-          cta: site?.cta || "Call today",
-        },
-        overlay,
-      ),
-    );
-  }
-  if (slot.id === "hook" || slot.id.startsWith("body")) {
-    const line = extractProductScript(i.brief, packet.product);
-    if (!directedOpen) {
-      lines.push(
-        packet.assets.length
-          ? "Talking-head: the real person from the attached reference photos, facing camera, mid-speech, at the real job site from those photos."
-          : "Talking-head: a local owner or technician facing camera, mid-speech, at a real driveway or storefront.",
-      );
-    }
-    lines.push(
-      "Do not invent vehicles, pool shapes, buildings, or lettering that are not in the reference photos. If no van is in the photos, do not add a branded service van.",
-    );
-    if (line) lines.push(spokenScriptInstruction(line, mode));
-  }
-  if (slot.id === "mascot" && i.mascotDescription) lines.push(`Mascot: ${i.mascotDescription}`);
-  return applyVideoDirection(lines.filter(Boolean).join("\n"), "still", visual);
-}
-
-function motionPrompt(
-  slot: GenerationPacket["recipe"]["slots"][number],
-  seconds: number,
-  tone: string,
-  city: string,
-  state: string,
-  spokenLine?: string,
-  direction?: string,
-  videoDirection?: string,
-  overlay?: TextOverlaySpec,
-  phone?: string,
-) {
-  const mode = onScreenMode(direction);
-  const directed = stillUsesDirectedOpening(videoDirection);
-  const visual = videoDirectionForModel(videoDirection, overlay);
-  const talking =
-    slot.id === "hook" || slot.id.startsWith("body")
-      ? [
-          directed
-            ? "Follow the visual shot list. Talent speaks when they are on camera; establishing frames may have VO over picture."
-            : "The person talks to camera with natural hand gestures. Mouth moves in speech.",
-          spokenLine ? motionScriptInstruction(spokenLine, mode) : "",
-          pronunciationNote(city, state),
-          "Keep real people, places, and products from the still and reference photos. Do not invent a van or a different pool.",
-          "Do not freeze the last seconds.",
-        ]
-          .filter(Boolean)
-          .join(" ")
-      : "Slow, confident camera. Keep type readable if present.";
-  return applyVideoDirection(
-    [
-      `Animate this advertisement frame. Clip length for editing is ${seconds} seconds — that is timing only. Do not speak the length.`,
-      slot.role,
-      `Tone: ${tone}. ${talking}`,
-      `Photoreal, no morphing logos, no extra text, no watermarks.`,
-      noInventedOnScreenTypeInstruction(phone, overlay),
-      `Never say twelve seconds, twenty seconds, forty seconds, or any runtime. Hard cut when the line is done.`,
-      "Do not mention geofences, grocery or retail anchors, or media-buy targeting.",
-      overlayHoldInstruction(overlay),
-    ].join(" "),
-    "video",
-    visual,
-  );
-}
-
-function imagineStillPrompt(
-  packet: GenerationPacket,
-  slot: GenerationPacket["recipe"]["slots"][number],
-  ratio: string,
-  direction?: string,
-  videoDirection?: string,
-  overlay?: TextOverlaySpec,
-) {
-  const i = packet.intake;
-  const site = packet.website_profile;
-  const tone = TONE_PACKS[i.tone];
-  const mode = onScreenMode(direction);
-  const directedOpen = stillUsesDirectedOpening(videoDirection);
-  const parts = [
-    `A photoreal ${ratio} advertisement still for ${i.businessName}, a ${i.category_label} in ${spokenPlace(i.city, i.state)}.`,
-    `This frame is the ${slot.label.toLowerCase()}: ${slot.role}`,
-    `The look is ${i.tone}: ${tone.picture}`,
-  ];
-  if (i.brief.trim()) {
-    const line = slotScriptLine(i.brief, packet.product, slot.id) || extractProductScript(i.brief, packet.product);
-    if (line) parts.push(`EXACT SCRIPT for this shot (speak these words, not an idea): ${line}`);
-  }
-  if (site?.tagline) parts.push(`Their line: ${site.tagline}.`);
-  if (site?.services?.length) parts.push(`Services: ${site.services.slice(0, 5).join(", ")}.`);
-  if (site?.about) parts.push(site.about.slice(0, 220));
-  if (slot.id === "end_card" || slot.id === "static") {
-    parts.push(
-      stillEndCardTypeInstruction(
-        mode,
-        {
-          businessName: i.businessName,
-          place: spokenPlace(i.city, i.state),
-          phone: i.phone,
-          cta: site?.cta || "Call today",
-        },
-        overlay,
-      ),
-    );
-  }
-  if (slot.id === "hook") {
-    const line = slotScriptLine(i.brief, packet.product, slot.id);
-    if (!directedOpen) {
-      parts.push(
-        "Talking-head still: owner or tech from the reference photos, facing camera, mid-speech, at the real job site from those photos. Match face and clothing exactly.",
-      );
-    }
-    parts.push(
-      "Do not invent a branded van, a different pool shape, or lettering that is not in the photos.",
-    );
-    if (line) parts.push(spokenScriptInstruction(line, mode));
-  }
-  if (slot.id === "mascot" && i.mascotDescription) parts.push(`Mascot: ${i.mascotDescription}`);
-  const refs = referencePromptBlock(packet.assets.filter((a) => a.kind === "logo" || a.kind === "upload"));
-  if (refs) parts.push(refs);
-  parts.push("Use the real business. No celebrity, no watermark, no UI chrome, no agency slogan.");
-  parts.push("Do not mention geofences, grocery or retail anchors, household income, age ranges, pilates studios, golf communities, or any media-buy targeting.");
-  parts.push(noInventedOnScreenTypeInstruction(i.phone, overlay));
-  parts.push(overlayHoldInstruction(overlay));
-  return applyVideoDirection(parts.filter(Boolean).join(" "), "still", videoDirectionForModel(videoDirection, overlay));
-}
-
-function imagineMotionPrompt(
-  slot: GenerationPacket["recipe"]["slots"][number],
-  seconds: number,
-  tone: Tone,
-  city: string,
-  state: string,
-  spokenLine?: string,
-  direction?: string,
-  videoDirection?: string,
-  overlay?: TextOverlaySpec,
-  phone?: string,
-) {
-  const pack = TONE_PACKS[tone];
-  const mode = onScreenMode(direction);
-  const directed = stillUsesDirectedOpening(videoDirection);
-  const talking =
-    slot.id === "hook" || slot.id.startsWith("body")
-      ? [
-          directed
-            ? "Follow the visual shot list. Talent speaks when they are on camera; establishing frames may have VO over picture."
-            : "The person talks to camera with natural hand gestures and a slight weight shift. Mouth moves in speech.",
-          spokenLine ? motionScriptInstruction(spokenLine, mode) : "",
-          pronunciationNote(city, state),
-          "Keep real people, places, and products from the still and reference photos. Do not invent a van or a different pool.",
-          "Do not freeze the last seconds.",
-        ]
-          .filter(Boolean)
-          .join(" ")
-      : "Slow, confident camera, subject stays recognizable, type stays readable.";
-  return applyVideoDirection(
-    [
-      `Animate this advertisement frame. Clip length for editing is ${seconds} seconds — that is timing only. Do not speak the length.`,
-      slot.role,
-      pack.picture,
-      talking,
-      "Photoreal, no morphing logos, no extra text, no watermarks.",
-      noInventedOnScreenTypeInstruction(phone, overlay),
-      "Never say twelve seconds, twenty seconds, forty seconds, or any runtime. Hard cut when the line is done.",
-      "Do not mention geofences, grocery or retail anchors, or media-buy targeting.",
-      overlayHoldInstruction(overlay),
-    ].join(" "),
-    "video",
-    videoDirectionForModel(videoDirection, overlay),
-  );
+function toPromptPacket(packet: GenerationPacket, slotId?: string): PromptPacket {
+  return {
+    intake: packet.intake,
+    website_profile: packet.website_profile,
+    recipe: packet.recipe,
+    assets: packet.assets,
+    script: slotId ? spokenForSlot(packet, slotId) : extractProductScript(packet.intake.brief, packet.product),
+  };
 }
 
 async function assetToModelUri(a: {
@@ -1287,7 +1034,6 @@ function initJob(
     videoDirection: visual,
     brief: packet.intake.brief,
   });
-  const extra = continuityLine(packet, direction, visual, textOverlay);
   return {
     status: "running",
     engine,
@@ -1301,40 +1047,12 @@ function initJob(
       const duration = engine === "imagine" ? imagineSeconds(s.duration) : apiVideoSeconds(target);
       const spoken = spokenForSlot(packet, s.id);
       const still =
-        (engine === "imagine"
-          ? imagineStillPrompt(packet, s, ratio, direction, visual, textOverlay)
-          : stillPrompt(packet, s, ratio, direction, visual, textOverlay)) +
-        " " +
-        extra;
+        engine === "imagine"
+          ? composeImagineStillPrompt(toPromptPacket(packet, s.id), s, ratio, direction, visual, textOverlay)
+          : composeStillPrompt(toPromptPacket(packet, s.id), s, ratio, direction, visual, textOverlay);
       const motion =
         duration != null
-          ? (engine === "imagine"
-              ? imagineMotionPrompt(
-                  s,
-                  duration,
-                  packet.intake.tone,
-                  packet.intake.city,
-                  packet.intake.state,
-                  spoken,
-                  direction,
-                  visual,
-                  textOverlay,
-                  packet.intake.phone,
-                )
-              : motionPrompt(
-                  s,
-                  duration,
-                  packet.intake.tone,
-                  packet.intake.city,
-                  packet.intake.state,
-                  spoken,
-                  direction,
-                  visual,
-                  textOverlay,
-                  packet.intake.phone,
-                )) +
-            " " +
-            extra
+          ? composeMotionPrompt(toPromptPacket(packet, s.id), s, duration, spoken, direction, visual, textOverlay, engine)
           : undefined;
       return {
         id: s.id,
@@ -1817,9 +1535,12 @@ async function tickGenerationLocked(
       if (packetAssets.some((a) => a.kind === "logo" || a.kind === "upload") && refs.uris.length === 0) {
         throw new Error("Reference photos are on this order but none could be sent to the image model.");
       }
-      const stillBase = slot.stillPrompt || stillPrompt(packet, recipeSlot, ratio, job.direction, job.videoDirection, job.textOverlay);
+      const stillBase =
+        slot.stillPrompt ||
+        composeStillPrompt(toPromptPacket(packet, recipeSlot.id), recipeSlot, ratio, job.direction, job.videoDirection, job.textOverlay);
+      const refBlock = refs.used.length ? referencePromptBlock(refs.used) : "";
       const url = await generateStill(
-        refs.used.length ? `${stillBase}\n${referencePromptBlock(refs.used)}` : stillBase,
+        refBlock && !stillBase.includes("REFERENCE PHOTOS ARE ATTACHED") ? `${stillBase}\n${refBlock}` : stillBase,
         refs.uris,
       );
       const origin = env("APP_ORIGIN") || "https://mya.geotargetus.dev";
