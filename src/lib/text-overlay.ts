@@ -262,10 +262,10 @@ export function videoDirectionForModel(videoDirection?: string | null, spec?: Te
     .map((raw) => {
       const line = raw.trim();
       if (END_CARD_TAG.test(line) || END_CARD_LABEL.test(line)) {
-        return "End card: hold a clean plate — no on-screen letters, phones, digits, addresses, or invented logos (type composited after generation).";
+        return "End card: clean plate (type composited).";
       }
       if (LOWER_THIRD_TAG.test(line) || LOWER_THIRD_LABEL.test(line)) {
-        return "Lower third: leave a clear name-title band — no on-screen letters, phones, digits, or invented captions (type composited after generation).";
+        return "Lower third: clear band (type composited).";
       }
       return raw;
     })
@@ -274,11 +274,7 @@ export function videoDirectionForModel(videoDirection?: string | null, spec?: Te
 
 export function overlayHoldInstruction(spec?: TextOverlaySpec | null): string {
   if (!hasTextOverlay(spec)) return "";
-  return [
-    "Do not letter end-card or lower-third copy, captions, phones, digits, addresses, logos, or a paragraph of type.",
-    "Exact brand type is composited after generation — leave a clean lower-third band and a clean last-three-second hold.",
-    "Clean plate only: no invented phone numbers, fake digits, digit scrap, addresses, captions, or gibberish lettering (not Knowillo, not Knoxvillo).",
-  ].join(" ");
+  return "Clean plate — no phones, digits, or invented type. Overlay is composited after generation.";
 }
 
 export function shouldOverlayStill(slotId: string): boolean {

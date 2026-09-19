@@ -125,22 +125,18 @@ describe("exact string rendering", () => {
     assert.doesNotMatch(svg, /Knowillo|Knoxvillo/);
     const hold = overlayHoldInstruction(spec);
     assert.match(hold, /composited after generation/);
-    assert.match(hold, /Clean plate only/);
-    assert.match(hold, /phone numbers/);
+    assert.match(hold, /Clean plate/);
+    assert.match(hold, /phones/);
     assert.match(hold, /digits/);
-    assert.match(hold, /gibberish lettering/);
-    assert.match(hold, /digit scrap/);
     assert.doesNotMatch(hold, /865-555-0100/);
+    assert.ok(hold.length < 120, `overlay hold should be one short line: ${hold.length}`);
     assert.match(overlayTags(spec), /\[END CARD:\] Knoxville Chamber/);
     const model = videoDirectionForModel(
       "End card: Knoxville Chamber / Innovation. Prosperity. Knoxville. / KnoxvilleChamber.com\nLower third: Larisa Brass | Director of Innovation",
       spec,
     );
-    assert.match(model, /no on-screen letters/);
-    assert.match(model, /phones/);
-    assert.match(model, /digits/);
-    assert.match(model, /invented logos/);
-    assert.match(model, /invented captions/);
+    assert.match(model, /clean plate \(type composited\)/);
+    assert.match(model, /clear band \(type composited\)/);
     assert.doesNotMatch(model, /Innovation\. Prosperity\. Knoxville\./);
     assert.doesNotMatch(model, /Larisa Brass/);
     assert.equal(overlayHoldInstruction(null), "");
