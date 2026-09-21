@@ -5,9 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import {
+  coverBlurRadius,
+  coverRectsFor,
+  endCardCoverRect,
   hasTextOverlay,
+  lowerThirdCoverRect,
   overlaySvgMarkup,
   overlayTiming,
+  type CoverRect,
   type TextOverlaySpec,
 } from "./text-overlay.ts";
 
@@ -31,28 +36,43 @@ async function runFfmpeg(args: string[]) {
   });
 }
 
-async function runFfprobe(file: string): Promise<{ width: number; height: number; duration: number }> {
-  const bin = ffmpegBin().replace(/ffmpeg$/, "ffprobe");
-  const probe = bin.endsWith("ffprobe") ? bin : "ffprobe";
-  try {
-    const { stdout } = await execFileAsync(
-      probe,
-      ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height:format=duration", "-of", "json", file],
-      { timeout: 30_000, maxBuffer: 2_000_000 },
-    );
-    const parsed = JSON.parse(stdout) as {
-      streams?: Array<{ width?: number; height?: number }>;
-      format?: { duration?: string };
-    };
-    const stream = parsed.streams?.[0];
-    return {
-      width: stream?.width || 1080,
-      height: stream?.height || 1920,
-      duration: Number(parsed.format?.duration) || 0,
-    };
-  } catch {
-    return { width: 1080, height: 1920, duration: 0 };
+async function runFfprobe(
+  file: string,
+): Promise<{ width: number; height: number; duration: number }> {
+  const packed = ffmpegBin().replace(/ffmpeg$/, "ffprobe");
+  const candidates = packed.endsWith("ffprobe") ? [packed, "ffprobe"] : ["ffprobe"];
+  for (const probe of candidates) {
+    try {
+      const { stdout } = await execFileAsync(
+        probe,
+        [
+          "-v",
+          "error",
+          "-select_streams",
+          "v:0",
+          "-show_entries",
+          "stream=width,height:format=duration",
+          "-of",
+          "json",
+          file,
+        ],
+        { timeout: 30_000, maxBuffer: 2_000_000 },
+      );
+      const parsed = JSON.parse(stdout) as {
+        streams?: Array<{ width?: number; height?: number }>;
+        format?: { duration?: string };
+      };
+      const stream = parsed.streams?.[0];
+      const width = stream?.width || 0;
+      const height = stream?.height || 0;
+      if (width > 0 && height > 0) {
+        return { width, height, duration: Number(parsed.format?.duration) || 0 };
+      }
+    } catch {
+      /* try the next ffprobe */
+    }
   }
+  return { width: 1080, height: 1920, duration: 0 };
 }
 
 function assetIdFromUrl(url: string): string | null {
@@ -95,6 +115,43 @@ async function rasterizeOverlay(
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
+/** Blur and darken a region so model-burned titles cannot be read under the Sharp type. */
+async function softenBurnedType(input: Buffer, rects: CoverRect[]): Promise<Buffer> {
+  const { default: sharp } = await import("sharp");
+  let current = input;
+  for (const rect of rects) {
+    if (rect.width < 2 || rect.height < 2) continue;
+    const meta = await sharp(current).metadata();
+    const width = meta.width || rect.width;
+    const height = meta.height || rect.height;
+    const radius = coverBlurRadius(width, height, rect);
+    const blurred = await sharp(current)
+      .extract({ left: rect.x, top: rect.y, width: rect.width, height: rect.height })
+      .blur(radius)
+      .modulate({ brightness: 0.68 })
+      .toBuffer();
+    const veil = await sharp({
+      create: {
+        width: rect.width,
+        height: rect.height,
+        channels: 4,
+        background: { r: 6, g: 8, b: 12, alpha: 0.42 },
+      },
+    })
+      .png()
+      .toBuffer();
+    const covered = await sharp(blurred)
+      .composite([{ input: veil, blend: "over" }])
+      .png()
+      .toBuffer();
+    current = await sharp(current)
+      .composite([{ input: covered, left: rect.x, top: rect.y }])
+      .png()
+      .toBuffer();
+  }
+  return current;
+}
+
 export async function overlayStillBuffer(
   input: Buffer,
   spec: TextOverlaySpec,
@@ -102,13 +159,19 @@ export async function overlayStillBuffer(
 ): Promise<{ buffer: Buffer; svg: string; mime: "image/jpeg" }> {
   if (!hasTextOverlay(spec)) return { buffer: input, svg: "", mime: "image/jpeg" };
   const { default: sharp } = await import("sharp");
-  const base = sharp(input, { failOn: "none" }).rotate();
-  const meta = await base.metadata();
+  const oriented = sharp(input, { failOn: "none" }).rotate();
+  const meta = await oriented.metadata();
   const width = meta.width || 1080;
   const height = meta.height || 1920;
+  let base = await oriented.png().toBuffer();
+  try {
+    base = Buffer.from(await softenBurnedType(base, coverRectsFor(width, height, spec, kind)));
+  } catch {
+    /* exact type still composites if the cover pass fails */
+  }
   const svg = overlaySvgMarkup(spec, width, height, kind);
   const plate = await sharp(Buffer.from(svg)).png().toBuffer();
-  const buffer = await base
+  const buffer = await sharp(base)
     .composite([{ input: plate, blend: "over" }])
     .jpeg({ quality: 88, mozjpeg: true })
     .toBuffer();
@@ -148,23 +211,54 @@ export async function overlayVideoBuffer(
     const probe = await runFfprobe(raw);
     const duration = probe.duration || opts?.durationHint || 15;
     const timing = overlayTiming(duration);
-    const filters: string[] = [];
     const inputs = ["-i", raw];
-    let last = "0:v";
     let idx = 1;
     let svgEnd: string | undefined;
     let svgLower: string | undefined;
 
+    const coverFilters: string[] = [];
+    const covers: Array<{ rect: CoverRect; enable: string }> = [];
+    if (spec.lowerThird?.lines.length) {
+      covers.push({
+        rect: lowerThirdCoverRect(probe.width, probe.height),
+        enable: `between(t,${timing.lowerThirdStart.toFixed(2)},${timing.lowerThirdEnd.toFixed(2)})`,
+      });
+    }
+    if (spec.endCard?.lines.length) {
+      covers.push({
+        rect: endCardCoverRect(probe.width, probe.height),
+        enable: `gte(t,${timing.endCardStart.toFixed(2)})`,
+      });
+    }
+    let covered = "0:v";
+    covers.forEach((cover, i) => {
+      const radius = coverBlurRadius(probe.width, probe.height, cover.rect);
+      const src = `csrc${i}`;
+      const blur = `cblur${i}`;
+      const base = `base${i}`;
+      const next = `vcov${i}`;
+      coverFilters.push(`[${covered}]split[${base}][${src}]`);
+      coverFilters.push(
+        `[${src}]crop=${cover.rect.width}:${cover.rect.height}:${cover.rect.x}:${cover.rect.y},boxblur=${radius}:2:${radius}:2,eq=brightness=-0.22:saturation=0.75[${blur}]`,
+      );
+      coverFilters.push(
+        `[${base}][${blur}]overlay=${cover.rect.x}:${cover.rect.y}:enable='${cover.enable}'[${next}]`,
+      );
+      covered = next;
+    });
+
+    const typeFilters: string[] = [];
+    let typed = covered;
     if (spec.lowerThird?.lines.length) {
       const png = await rasterizeOverlay(spec, probe.width, probe.height, "lowerThird");
       svgLower = overlaySvgMarkup(spec, probe.width, probe.height, "lowerThird");
       await writeFile(lowerPng, png);
       inputs.push("-i", lowerPng);
       const next = "vlt";
-      filters.push(
-        `[${last}][${idx}:v]overlay=0:0:enable='between(t,${timing.lowerThirdStart.toFixed(2)},${timing.lowerThirdEnd.toFixed(2)})'[${next}]`,
+      typeFilters.push(
+        `[${typed}][${idx}:v]overlay=0:0:enable='between(t,${timing.lowerThirdStart.toFixed(2)},${timing.lowerThirdEnd.toFixed(2)})'[${next}]`,
       );
-      last = next;
+      typed = next;
       idx += 1;
     }
     if (spec.endCard?.lines.length) {
@@ -173,55 +267,59 @@ export async function overlayVideoBuffer(
       await writeFile(endPng, png);
       inputs.push("-i", endPng);
       const next = "vec";
-      filters.push(
-        `[${last}][${idx}:v]overlay=0:0:enable='gte(t,${timing.endCardStart.toFixed(2)})'[${next}]`,
+      typeFilters.push(
+        `[${typed}][${idx}:v]overlay=0:0:enable='gte(t,${timing.endCardStart.toFixed(2)})'[${next}]`,
       );
-      last = next;
+      typed = next;
     }
 
-    if (!filters.length) return { buffer: input };
+    if (!typeFilters.length && !coverFilters.length) return { buffer: input };
 
-    try {
-      await runFfmpeg([
-        ...inputs,
-        "-filter_complex",
-        filters.join(";"),
-        "-map",
-        `[${last}]`,
-        "-map",
-        "0:a?",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "fast",
-        "-crf",
-        "28",
-        "-c:a",
-        "copy",
-        "-movflags",
-        "+faststart",
-        "-shortest",
-        out,
-      ]);
-    } catch {
-      await runFfmpeg([
-        ...inputs,
-        "-filter_complex",
-        filters.join(";"),
-        "-map",
-        `[${last}]`,
-        "-c:v",
-        "libx264",
-        "-preset",
-        "fast",
-        "-crf",
-        "28",
-        "-an",
-        "-movflags",
-        "+faststart",
-        out,
-      ]);
+    const plainType = typeFilters.map((line) =>
+      line.replaceAll("[vcov0]", "[0:v]").replaceAll("[vcov1]", "[0:v]"),
+    );
+    const graphs = coverFilters.length
+      ? [
+          { filters: [...coverFilters, ...typeFilters], map: typed, audio: true },
+          { filters: [...coverFilters, ...typeFilters], map: typed, audio: false },
+          { filters: plainType, map: typed.replace(/vcov\d+/, "0:v"), audio: true },
+          { filters: plainType, map: typed.replace(/vcov\d+/, "0:v"), audio: false },
+        ]
+      : [
+          { filters: typeFilters, map: typed, audio: true },
+          { filters: typeFilters, map: typed, audio: false },
+        ];
+
+    let encoded = false;
+    let lastErr: unknown;
+    for (const graph of graphs) {
+      if (!graph.filters.length) continue;
+      try {
+        await runFfmpeg([
+          ...inputs,
+          "-filter_complex",
+          graph.filters.join(";"),
+          "-map",
+          `[${graph.map}]`,
+          ...(graph.audio ? ["-map", "0:a?", "-c:a", "copy"] : ["-an"]),
+          "-c:v",
+          "libx264",
+          "-preset",
+          "fast",
+          "-crf",
+          "28",
+          "-movflags",
+          "+faststart",
+          ...(graph.audio ? ["-shortest"] : []),
+          out,
+        ]);
+        encoded = true;
+        break;
+      } catch (err) {
+        lastErr = err;
+      }
     }
+    if (!encoded) throw lastErr instanceof Error ? lastErr : new Error("Overlay encode failed");
     return { buffer: await readFile(out), svgEnd, svgLower };
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => undefined);
@@ -246,7 +344,8 @@ export async function overlayVideoFromUrl(
 }
 
 export async function fontsReady(): Promise<boolean> {
-  const regular = process.env.MYA_OVERLAY_FONT ?? "/usr/share/fonts/truetype/macos/Inter-Regular.ttf";
+  const regular =
+    process.env.MYA_OVERLAY_FONT ?? "/usr/share/fonts/truetype/macos/Inter-Regular.ttf";
   try {
     await access(regular);
     return true;

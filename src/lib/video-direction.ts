@@ -93,7 +93,8 @@ export function parseBriefLayers(brief: string): BriefLayers {
       if (mode !== "auto") mode = "auto";
       continue;
     }
-    if (MEDIA_BUY_LINE.test(line) || PRODUCT_SECTION_HEAD.test(line) || INTAKE_FIELD.test(line)) continue;
+    if (MEDIA_BUY_LINE.test(line) || PRODUCT_SECTION_HEAD.test(line) || INTAKE_FIELD.test(line))
+      continue;
 
     const spokenTag = line.match(SPOKEN_BRACKET);
     if (spokenTag) {
@@ -156,12 +157,15 @@ export function extractVideoDirection(brief: string): string {
 export function looksLikeShotList(text: string | null | undefined): boolean {
   const t = text?.trim() ?? "";
   if (!t) return false;
-  if (VISUAL_BRACKET.test(t) || /\[(?:VISUAL|CAMERA|SFX|LOWER[- ]?THIRD|END[- ]?CARD)\b/i.test(t)) return true;
+  if (VISUAL_BRACKET.test(t) || /\[(?:VISUAL|CAMERA|SFX|LOWER[- ]?THIRD|END[- ]?CARD)\b/i.test(t))
+    return true;
   const layers = parseBriefLayers(t);
   return layers.hasVisualDirection && layers.videoDirection.length >= 12;
 }
 
-export function readVideoDirectionField(body: Record<string, unknown> | null | undefined): string | undefined {
+export function readVideoDirectionField(
+  body: Record<string, unknown> | null | undefined,
+): string | undefined {
   if (!body) return undefined;
   for (const key of VIDEO_DIRECTION_KEYS) {
     const value = body[key];
@@ -221,13 +225,20 @@ export function stillOpeningHint(videoDirection?: string | null): string {
     .join(" ");
 }
 
+function plateIsComposited(videoDirection?: string | null): boolean {
+  return /type composited/i.test(videoDirection ?? "");
+}
+
 export function videoShotListInstruction(videoDirection?: string | null): string {
   const d = videoDirection?.trim();
   if (!d) return "";
+  const beats = plateIsComposited(d)
+    ? "Hit every location, transition, and talent beat. Blank-plate beats stay blank — no words, letters, logos, or URLs."
+    : "Hit every beat: locations, transitions, talent action, named lower-thirds, end card, and SFX cues.";
   return [
     "SECOND PASS VIDEO — VISUAL SHOT LIST / CAMERA DIRECTION (picture and camera only; do not speak these words; do not rewrite the voiceover):",
     d,
-    "Hit every beat: locations, transitions, talent action, named lower-thirds, end card, and SFX cues.",
+    beats,
     "This shot list overrides any one-room / one-person / no-cut default.",
     "Spoken copy stays the voiceover script verbatim.",
   ].join(" ");
@@ -235,7 +246,10 @@ export function videoShotListInstruction(videoDirection?: string | null): string
 
 export function pictureContinuityInstruction(videoDirection?: string | null): string {
   if (videoDirection?.trim()) {
-    return "Follow the visual shot list for camera, location, and graphics. Directed transitions are required. Keep one music bed. Do not invent extra locations. Never speak the shot list.";
+    const picture = plateIsComposited(videoDirection)
+      ? "camera and location"
+      : "camera, location, and graphics";
+    return `Follow the visual shot list for ${picture}. Directed transitions are required. Keep one music bed. Do not invent extra locations. Never speak the shot list.`;
   }
   return "ONE CONTINUOUS SHOT. Do not cut to a new location or a separate end-card graphic.";
 }
@@ -249,9 +263,13 @@ export function applyVideoDirection(
   phase: "still" | "video",
   videoDirection?: string | null,
 ): string {
-  const add = phase === "video" ? videoShotListInstruction(videoDirection) : stillOpeningHint(videoDirection);
+  const add =
+    phase === "video" ? videoShotListInstruction(videoDirection) : stillOpeningHint(videoDirection);
   if (!add) return prompt;
-  const marker = phase === "video" ? "SECOND PASS VIDEO — VISUAL SHOT LIST" : "FIRST PASS STILL — opening frame only";
+  const marker =
+    phase === "video"
+      ? "SECOND PASS VIDEO — VISUAL SHOT LIST"
+      : "FIRST PASS STILL — opening frame only";
   if (prompt.includes(marker)) return prompt;
   return `${prompt}\n${add}`.trim();
 }

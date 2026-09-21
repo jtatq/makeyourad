@@ -26,7 +26,7 @@ import {
   orderOpenForGeneratePump,
   VIDEO_WAIT_MS,
 } from "./generation-progress";
-import { shouldReinitGeneration } from "./generate-direction";
+import { directionShownToModel, shouldReinitGeneration } from "./generate-direction";
 import {
   hasTextOverlay,
   resolveTextOverlay,
@@ -732,13 +732,17 @@ async function applyAutoQc(order: OrderRow, job: GenerationJob, slot: GenSlotSta
 
 const MAX_FLOOR_REMAKES = 1;
 
-function floorDirection(order: OrderRow, slot: GenSlotState): string {
+function floorDirection(order: OrderRow, slot: GenSlotState, overlay?: TextOverlaySpec | null): string {
   const fails = (slot.autoQc?.checks ?? []).filter((c) => !c.ok);
   const bits = fails.map((c) => c.detail || c.label);
   bits.push(pronunciationNote(order.city, order.state));
-  bits.push(
-    `On-screen name must read ${order.business_name}. City ${order.city}. Phone ${order.phone}. No watermarks, no extra logos, no morphing lettering.`,
-  );
+  if (hasTextOverlay(overlay)) {
+    bits.push("Blank plate — no words, letters, logos, or URLs. Type is composited after this take.");
+  } else {
+    bits.push(
+      `On-screen name must read ${order.business_name}. City ${order.city}. Phone ${order.phone}. No watermarks, no extra logos, no morphing lettering.`,
+    );
+  }
   return bits.filter(Boolean).join(" ").slice(0, 600);
 }
 
@@ -767,13 +771,14 @@ export async function applyFloorDecision(order: OrderRow, job: GenerationJob, sl
     return "kept";
   }
   if (hardFail && slot.remakes < MAX_FLOOR_REMAKES) {
-    const note = floorDirection(order, slot);
+    const note = floorDirection(order, slot, job.textOverlay);
     slot.remakes += 1;
     job.direction = note;
     slot.qcNote = note;
-    const add = ` DIRECTION CHANGE (this overrides the previous take): ${note}`;
-    if (slot.stillPrompt && !slot.stillPrompt.includes(note)) slot.stillPrompt += add;
-    if (slot.motionPrompt && !slot.motionPrompt.includes(note)) slot.motionPrompt += add;
+    const shown = directionShownToModel(note, job.textOverlay);
+    const add = ` DIRECTION CHANGE (this overrides the previous take): ${shown}`;
+    if (slot.stillPrompt && !slot.stillPrompt.includes(shown)) slot.stillPrompt += add;
+    if (slot.motionPrompt && !slot.motionPrompt.includes(shown)) slot.motionPrompt += add;
     if (job.videoDirection) {
       const visual = videoDirectionForModel(job.videoDirection, job.textOverlay);
       if (slot.stillPrompt) slot.stillPrompt = applyVideoDirection(slot.stillPrompt, "still", visual);
@@ -794,7 +799,7 @@ export async function applyFloorDecision(order: OrderRow, job: GenerationJob, sl
     );
     return "remake";
   }
-  job.floor = { status: "needs_human", note: floorDirection(order, slot), remakes: slot.remakes };
+  job.floor = { status: "needs_human", note: floorDirection(order, slot, job.textOverlay), remakes: slot.remakes };
   await appendEvent(order.id, "qc", `Floor stopped · ${slot.label} still fails. Watch it.`, "floor");
   return "human";
 }
@@ -889,9 +894,10 @@ export async function regenSlot(
   if (extra) {
     job.direction = extra;
     slot.qcNote = extra;
-    const add = ` DIRECTION CHANGE (this overrides the previous take): ${extra}`;
-    if (slot.stillPrompt && !slot.stillPrompt.includes(extra)) slot.stillPrompt += add;
-    if (slot.motionPrompt && !slot.motionPrompt.includes(extra)) slot.motionPrompt += add;
+    const shown = directionShownToModel(extra, job.textOverlay);
+    const add = ` DIRECTION CHANGE (this overrides the previous take): ${shown}`;
+    if (slot.stillPrompt && !slot.stillPrompt.includes(shown)) slot.stillPrompt += add;
+    if (slot.motionPrompt && !slot.motionPrompt.includes(shown)) slot.motionPrompt += add;
   }
   if (job.videoDirection) {
     const visual = videoDirectionForModel(job.videoDirection, job.textOverlay);

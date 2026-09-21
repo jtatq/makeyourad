@@ -16,7 +16,8 @@ import {
   videoShotListInstruction,
 } from "./video-direction.ts";
 
-const KNOX_SPOKEN = "You didn't build your business in a vacuum. You built it with grit, neighbors, and a city that shows up. Join us today.";
+const KNOX_SPOKEN =
+  "You didn't build your business in a vacuum. You built it with grit, neighbors, and a city that shows up. Join us today.";
 
 const KNOX_BRACKET_BRIEF = `[VISUAL:] Open on downtown Knoxville skyline
 [VO:] You didn't build your business in a vacuum.
@@ -84,7 +85,10 @@ describe("parse spoken VO vs visual direction", () => {
     assert.equal(layers.spoken, brief);
     assert.equal(layers.videoDirection, "");
     assert.equal(layers.hasVisualDirection, false);
-    assert.equal(looksLikeShotList("Match Alan's face and the real pool. Minimal on-screen text."), false);
+    assert.equal(
+      looksLikeShotList("Match Alan's face and the real pool. Minimal on-screen text."),
+      false,
+    );
   });
 
   it("does not steal spoken idioms like Open your doors", () => {
@@ -115,13 +119,35 @@ describe("video prompt includes the shot list", () => {
     assert.match(motion, /KnoxvilleChamber\.com/);
     assert.match(motion, /do not rewrite the voiceover/i);
     assert.match(pictureContinuityInstruction(visual), /Directed transitions are required/);
+    assert.match(pictureContinuityInstruction(visual), /graphics/);
+    assert.match(videoShotListInstruction(visual), /named lower-thirds/);
     assert.doesNotMatch(pictureContinuityInstruction(visual), /ONE CONTINUOUS SHOT/);
+    const blank = visual
+      .split("\n")
+      .map((line) =>
+        /end card:/i.test(line)
+          ? "End card: blank plate, no letters (type composited)."
+          : /lower third:/i.test(line)
+            ? "Lower third: blank band, no letters (type composited)."
+            : line,
+      )
+      .join("\n");
+    const blankVideo = videoShotListInstruction(blank);
+    assert.match(blankVideo, /no words, letters, logos, or URLs/);
+    assert.doesNotMatch(blankVideo, /named lower-thirds/);
+    assert.doesNotMatch(blankVideo, /KnoxvilleChamber\.com/);
+    assert.match(pictureContinuityInstruction(blank), /camera and location/);
+    assert.doesNotMatch(pictureContinuityInstruction(blank), /graphics/);
   });
 
   it("keeps the still pass free of shot-list captions", () => {
     const visual = extractVideoDirection(KNOX_SECTION_BRIEF);
     const spoken = extractSpokenVoiceover(KNOX_SECTION_BRIEF);
-    const still = applyVideoDirection(spokenScriptInstruction(spoken, "minimal-endcard"), "still", visual);
+    const still = applyVideoDirection(
+      spokenScriptInstruction(spoken, "minimal-endcard"),
+      "still",
+      visual,
+    );
     assert.match(still, /You didn't build your business/);
     assert.match(still, /FIRST PASS STILL — opening frame only/);
     assert.match(still, /Open on downtown Knoxville skyline/);
@@ -131,7 +157,9 @@ describe("video prompt includes the shot list", () => {
     const hint = stillOpeningHint(visual);
     assert.doesNotMatch(hint, /Captions match/);
     assert.match(hint, /not captions/);
-    assert.ok((videoShotListInstruction(visual).match(/Transition to Market Square/g) ?? []).length >= 1);
+    assert.ok(
+      (videoShotListInstruction(visual).match(/Transition to Market Square/g) ?? []).length >= 1,
+    );
   });
 
   it("resolves explicit videoDirection over a parsed brief, then stored, then shot-list direction", () => {
@@ -166,9 +194,18 @@ describe("video prompt includes the shot list", () => {
   });
 
   it("reads bot aliases for videoDirection", () => {
-    assert.equal(readVideoDirectionField({ videoDirection: "Open on the skyline." }), "Open on the skyline.");
-    assert.equal(readVideoDirectionField({ shot_list: "Tight shot, then end card." }), "Tight shot, then end card.");
-    assert.equal(readVideoDirectionField({ cameraDirection: "Handheld follow." }), "Handheld follow.");
+    assert.equal(
+      readVideoDirectionField({ videoDirection: "Open on the skyline." }),
+      "Open on the skyline.",
+    );
+    assert.equal(
+      readVideoDirectionField({ shot_list: "Tight shot, then end card." }),
+      "Tight shot, then end card.",
+    );
+    assert.equal(
+      readVideoDirectionField({ cameraDirection: "Handheld follow." }),
+      "Handheld follow.",
+    );
     assert.equal(readVideoDirectionField({ direction: "Match the face." }), undefined);
   });
 });
