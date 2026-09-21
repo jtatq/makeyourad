@@ -9,10 +9,13 @@ export type EndCardBits = {
   cta: string;
 };
 
-export type OverlayTypeHint = {
-  endCard?: { lines: string[] } | null;
-  lowerThird?: { lines: string[] } | null;
-} | null | undefined;
+export type OverlayTypeHint =
+  | {
+      endCard?: { lines: string[] } | null;
+      lowerThird?: { lines: string[] } | null;
+    }
+  | null
+  | undefined;
 
 const MINIMAL_TEXT =
   /minimal(?:\s+on[-\s]?screen)?(?:\s+text)?|end[-\s]?cards?(?:\s+only|\s+text)?|(?:business\s+)?name(?:\s+and|\s*\+\s*|\s*\/\s*|&\s*)city|city\s+and\s+(?:business\s+)?name|no (?:on[-\s]?screen )?(?:script|captions?|lower[- ]thirds?)|don'?t (?:put|burn|letter|show) (?:the )?(?:full )?(?:script|voiceover|\bvo\b)|(?:spoken|voiceover|vo)\s+only/i;
@@ -22,6 +25,15 @@ const PLACEHOLDER_PHONE = /see\s+website|n\/a\b|none\b|unknown|not\s+provided|tb
 /** Image-model prompt cap. Leave headroom under the 4096 hard limit. */
 export const IMAGE_STILL_PROMPT_BUDGET = 3500;
 export const IMAGE_STILL_PROMPT_HARD_MAX = 4096;
+
+/** Operator notes like "name and city only" must not tell the model to letter a composited card. */
+export function directionShownToModel(direction: string, overlay?: OverlayTypeHint): string {
+  if (!hasOverlayType(overlay)) return direction;
+  return direction
+    .replace(/\bbusiness name and city only\b/gi, "a blank plate")
+    .replace(/\bname and city only\b/gi, "a blank plate")
+    .replace(/\bname\s*(?:and|\+|&|\/)\s*city\b/gi, "a blank plate");
+}
 
 export function onScreenMode(direction?: string | null): OnScreenMode {
   const d = direction?.trim() ?? "";
@@ -58,9 +70,14 @@ export function onScreenTypeGuard(phone?: string | null, overlay?: OverlayTypeHi
 export const noInventedOnScreenTypeInstruction = onScreenTypeGuard;
 export const NO_INVENTED_ONSCREEN_TYPE = ON_SCREEN_TYPE_GUARD;
 
-export function spokenScriptInstruction(script: string, mode: OnScreenMode): string {
+export function spokenScriptInstruction(
+  script: string,
+  mode: OnScreenMode,
+  overlay?: OverlayTypeHint,
+): string {
   if (mode === "minimal-endcard") {
-    return `Mouth and SPEAK this script verbatim, do not paraphrase: "${script}". Do not burn those words as on-screen captions, lower-thirds, or a paragraph of type. On-screen text is business name and city only.`;
+    const plate = hasOverlayType(overlay) ? "" : " On-screen text is business name and city only.";
+    return `Mouth and SPEAK this script verbatim, do not paraphrase: "${script}". Do not burn those words as on-screen captions, lower-thirds, or a paragraph of type.${plate}`;
   }
   return `Mouth the exact full script: "${script}". Captions match those words. This is the script, not an idea.`;
 }
@@ -78,7 +95,7 @@ export function endCardTypeInstruction(
   overlay?: OverlayTypeHint,
 ): string {
   if (hasOverlayType(overlay)) {
-    return "Last 3s: hold a clean plate for composited type.";
+    return "Last 3s: blank plate, no words or letters.";
   }
   if (mode === "minimal-endcard") {
     return `Last 3s: ${bits.businessName}. ${bits.place}. Do not letter the spoken script.`;
@@ -94,7 +111,7 @@ export function stillEndCardTypeInstruction(
   overlay?: OverlayTypeHint,
 ): string {
   if (hasOverlayType(overlay)) {
-    return "Clean plate for composited end-card.";
+    return "Blank plate, no on-screen type.";
   }
   if (mode === "minimal-endcard") {
     return `Type: ${bits.businessName}. ${bits.place}.`;

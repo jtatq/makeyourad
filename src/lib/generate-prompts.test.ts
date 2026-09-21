@@ -1,6 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { composeStillPrompt, continuityLine, type PromptPacket } from "./generate-prompts.ts";
+import {
+  composeMotionPrompt,
+  composeStillPrompt,
+  continuityLine,
+  type PromptPacket,
+} from "./generate-prompts.ts";
 import {
   IMAGE_STILL_PROMPT_BUDGET,
   IMAGE_STILL_PROMPT_HARD_MAX,
@@ -16,7 +21,10 @@ const VO =
   "the next location, and the next decade. Come see us downtown and get to work with neighbors who care. " +
   "This city rewards people who show up, and we will be there when you do.";
 
-assert.ok(VO.length >= 380 && VO.length <= 520, `fixture VO should be ~400 chars, got ${VO.length}`);
+assert.ok(
+  VO.length >= 380 && VO.length <= 520,
+  `fixture VO should be ~400 chars, got ${VO.length}`,
+);
 
 const OVERLAY = specFromFields(
   ["Knoxville Chamber", "Innovation. Prosperity. Knoxville.", "KnoxvilleChamber.com"],
@@ -59,7 +67,22 @@ describe("still prompt budget", () => {
     assert.equal(guardHits, 1, `type guard should appear once, found ${guardHits}\n${still}`);
     assert.match(still, /Clean plate — no phones, digits, or invented type/);
     assert.match(still, /composited after generation/);
+    assert.match(still, /blank plate with no words, letters, logos, or URLs/);
+    assert.match(still, /You didn't build your business in a vacuum/);
+    assert.doesNotMatch(still, /super name and city/i);
+    assert.doesNotMatch(still, /business name and city only/i);
+    assert.doesNotMatch(still, /Innovation\. Prosperity\. Knoxville/);
+    assert.doesNotMatch(still, /KnoxvilleChamber\.com/);
     assert.doesNotMatch(still, /865-555-0100|555-0100/);
+    const motion = composeMotionPrompt(packet, slot, 15, VO, direction, visual, OVERLAY, "imagine");
+    assert.match(motion, /You didn't build your business in a vacuum/);
+    assert.match(motion, /blank plate/i);
+    assert.doesNotMatch(motion, /super name and city/i);
+    assert.doesNotMatch(motion, /Innovation\. Prosperity\. Knoxville/);
+    assert.doesNotMatch(motion, /KnoxvilleChamber\.com/);
+    assert.doesNotMatch(motion, /named lower-thirds/);
+    const lettered = composeStillPrompt(knoxPacket(0), slot, "9:16");
+    assert.match(lettered, /super name and city/i);
     assert.ok(
       still.length <= IMAGE_STILL_PROMPT_BUDGET,
       `still prompt ${still.length} exceeds budget ${IMAGE_STILL_PROMPT_BUDGET}`,

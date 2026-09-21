@@ -56,7 +56,10 @@ export function overlayLines(spec?: TextOverlaySpec | null): string[] {
 }
 
 function tidyLine(raw: string): string {
-  return raw.replace(/\s+/g, " ").replace(/^[-*•]\s*/, "").trim();
+  return raw
+    .replace(/\s+/g, " ")
+    .replace(/^[-*•]\s*/, "")
+    .trim();
 }
 
 function uniqueLines(lines: string[]): string[] {
@@ -95,8 +98,14 @@ function stripSceneCrumbs(line: string): string {
   let t = tidyLine(line);
   t = t.replace(/^\[(?:END[- ]?CARDS?|LOWER[- ]?THIRDS?|SUPER)\]\s*/i, "");
   t = t.replace(SCENE_SUFFIX, "");
-  t = t.replace(/\s+\+\s+/g, " ").replace(/\s+/g, " ").trim();
-  t = t.replace(/\b(?:logo|lockup|wordmark)\b/gi, "").replace(/\s+/g, " ").trim();
+  t = t
+    .replace(/\s+\+\s+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  t = t
+    .replace(/\b(?:logo|lockup|wordmark)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
   t = t.replace(/^[-+|/]+\s*|\s*[-+|/]+$/g, "").trim();
   return t;
 }
@@ -106,7 +115,8 @@ export function extractEndCardCopy(raw: string): string[] {
   const text = tidyLine(raw);
   if (!text) return [];
   const slash = splitOverlayLines(text);
-  if (slash.length > 1) return uniqueLines(slash.map(stripSceneCrumbs).filter((l) => l && !SCENE_PREFIX.test(l)));
+  if (slash.length > 1)
+    return uniqueLines(slash.map(stripSceneCrumbs).filter((l) => l && !SCENE_PREFIX.test(l)));
 
   const urls = text.match(new RegExp(URL_LIKE.source, "gi")) ?? [];
   let rest = text;
@@ -114,11 +124,14 @@ export function extractEndCardCopy(raw: string): string[] {
   rest = rest.replace(SCENE_SUFFIX, "");
   const beforeLogo = rest.split(LOGO_PLUS)[0] ?? "";
   const name = stripSceneCrumbs(beforeLogo);
-  const lines = [name, ...urls.map(tidyLine)].filter((l) => l && !SCENE_PREFIX.test(l) && !/^logo\b/i.test(l));
+  const lines = [name, ...urls.map(tidyLine)].filter(
+    (l) => l && !SCENE_PREFIX.test(l) && !/^logo\b/i.test(l),
+  );
   if (lines.length) return uniqueLines(lines);
 
   const cleaned = stripSceneCrumbs(text);
-  if (!cleaned || SCENE_PREFIX.test(cleaned) || LOGO_PLUS.test(text) && cleaned.length < 3) return [];
+  if (!cleaned || SCENE_PREFIX.test(cleaned) || (LOGO_PLUS.test(text) && cleaned.length < 3))
+    return [];
   return [cleaned];
 }
 
@@ -136,7 +149,11 @@ function readUnknownLines(value: unknown): string[] {
   if (value == null) return [];
   if (typeof value === "string") return splitOverlayLines(value);
   if (Array.isArray(value)) {
-    return uniqueLines(value.flatMap((item) => (typeof item === "string" ? splitOverlayLines(item) : readUnknownLines(item))));
+    return uniqueLines(
+      value.flatMap((item) =>
+        typeof item === "string" ? splitOverlayLines(item) : readUnknownLines(item),
+      ),
+    );
   }
   if (typeof value === "object") {
     const rec = value as Record<string, unknown>;
@@ -151,7 +168,8 @@ export function readEndCardField(body: Record<string, unknown> | null | undefine
   if (!body) return [];
   for (const key of END_CARD_FIELD_KEYS) {
     const lines = readUnknownLines(body[key]);
-    if (lines.length) return uniqueLines(lines.flatMap((l) => (l.includes("/") ? splitOverlayLines(l) : [l])));
+    if (lines.length)
+      return uniqueLines(lines.flatMap((l) => (l.includes("/") ? splitOverlayLines(l) : [l])));
   }
   return [];
 }
@@ -198,7 +216,9 @@ export function parseTextOverlayFromDirection(text?: string | null): TextOverlay
   return spec;
 }
 
-export function mergeTextOverlay(...parts: Array<TextOverlaySpec | null | undefined>): TextOverlaySpec {
+export function mergeTextOverlay(
+  ...parts: Array<TextOverlaySpec | null | undefined>
+): TextOverlaySpec {
   const end: string[] = [];
   const lower: string[] = [];
   for (const part of parts) {
@@ -238,22 +258,31 @@ export function overlayTags(spec?: TextOverlaySpec | null): string {
   if (!hasTextOverlay(spec)) return "";
   const lines: string[] = [];
   if (spec?.endCard?.lines.length) lines.push(`[END CARD:] ${spec.endCard.lines.join(" / ")}`);
-  if (spec?.lowerThird?.lines.length) lines.push(`[LOWER THIRD:] ${spec.lowerThird.lines.join(" | ")}`);
+  if (spec?.lowerThird?.lines.length)
+    lines.push(`[LOWER THIRD:] ${spec.lowerThird.lines.join(" | ")}`);
   return lines.join("\n");
 }
 
 /** Persist exact overlay tags beside the shot list so remakes can re-parse them. */
-export function composeStoredVisual(videoDirection?: string | null, overlay?: TextOverlaySpec | null): string {
+export function composeStoredVisual(
+  videoDirection?: string | null,
+  overlay?: TextOverlaySpec | null,
+): string {
   const visual = videoDirection?.trim() ?? "";
   const already = parseTextOverlayFromDirection(visual);
   const missing: string[] = [];
-  if (overlay?.endCard && !already.endCard) missing.push(overlayTags({ endCard: overlay.endCard, lowerThird: null }));
-  if (overlay?.lowerThird && !already.lowerThird) missing.push(overlayTags({ endCard: null, lowerThird: overlay.lowerThird }));
+  if (overlay?.endCard && !already.endCard)
+    missing.push(overlayTags({ endCard: overlay.endCard, lowerThird: null }));
+  if (overlay?.lowerThird && !already.lowerThird)
+    missing.push(overlayTags({ endCard: null, lowerThird: overlay.lowerThird }));
   return [visual, ...missing].filter(Boolean).join("\n").trim();
 }
 
 /** Shot list for the model: keep the beat, drop letters we will composite. */
-export function videoDirectionForModel(videoDirection?: string | null, spec?: TextOverlaySpec | null): string {
+export function videoDirectionForModel(
+  videoDirection?: string | null,
+  spec?: TextOverlaySpec | null,
+): string {
   const d = videoDirection?.trim() ?? "";
   if (!d) return "";
   if (!hasTextOverlay(spec)) return d;
@@ -262,14 +291,96 @@ export function videoDirectionForModel(videoDirection?: string | null, spec?: Te
     .map((raw) => {
       const line = raw.trim();
       if (END_CARD_TAG.test(line) || END_CARD_LABEL.test(line)) {
-        return "End card: clean plate (type composited).";
+        return "End card: blank plate, no letters (type composited).";
       }
       if (LOWER_THIRD_TAG.test(line) || LOWER_THIRD_LABEL.test(line)) {
-        return "Lower third: clear band (type composited).";
+        return "Lower third: blank band, no letters (type composited).";
       }
       return raw;
     })
     .join("\n");
+}
+
+const SUPER_NAME_CITY =
+  /In the last three seconds hold and super name and city \(full state word\)\. Super a phone only when a real number was provided — never invent digits, addresses, or contact scrap\. Super CTA if provided\./;
+
+/**
+ * Slot roles still say "super name and city" for spots that letter their own end card.
+ * When Sharp will composite the type, replace that sentence — do not add a second guard.
+ */
+export function promptRoleForOverlay(role: string, spec?: TextOverlaySpec | null): string {
+  if (!hasTextOverlay(spec) || !role) return role;
+  return role.replace(
+    SUPER_NAME_CITY,
+    "In the last three seconds hold a blank plate with no words, letters, logos, or URLs.",
+  );
+}
+
+export type CoverRect = { x: number; y: number; width: number; height: number };
+
+function evenRect(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  frameW: number,
+  frameH: number,
+): CoverRect {
+  const fw = Math.max(2, frameW - (frameW % 2));
+  const fh = Math.max(2, frameH - (frameH % 2));
+  let left = Math.max(0, Math.floor(x));
+  let top = Math.max(0, Math.floor(y));
+  left -= left % 2;
+  top -= top % 2;
+  let w = Math.floor(width);
+  let h = Math.floor(height);
+  if (left + w > fw) w = fw - left;
+  if (top + h > fh) h = fh - top;
+  w -= w % 2;
+  h -= h % 2;
+  if (w < 2) w = Math.min(2, fw - left);
+  if (h < 2) h = Math.min(2, fh - top);
+  return { x: left, y: top, width: w, height: h };
+}
+
+/** Lower half through the bottom edge, full width — wider than the Sharp end-card box. */
+export function endCardCoverRect(width: number, height: number): CoverRect {
+  const w = Math.max(2, Math.round(width));
+  const h = Math.max(2, Math.round(height));
+  const top = Math.round(h * 0.5);
+  return evenRect(0, top, w, h - top, w, h);
+}
+
+/** Full-width band behind the lower third so centered model supers are covered too. */
+export function lowerThirdCoverRect(width: number, height: number): CoverRect {
+  const w = Math.max(2, Math.round(width));
+  const h = Math.max(2, Math.round(height));
+  const top = Math.round(h * 0.68);
+  const band = Math.round(h * 0.28);
+  return evenRect(0, top, w, Math.min(band, h - top), w, h);
+}
+
+export function coverRectsFor(
+  width: number,
+  height: number,
+  spec: TextOverlaySpec,
+  kind: "endCard" | "lowerThird" | "both",
+): CoverRect[] {
+  const rects: CoverRect[] = [];
+  if ((kind === "endCard" || kind === "both") && spec.endCard?.lines.length)
+    rects.push(endCardCoverRect(width, height));
+  if ((kind === "lowerThird" || kind === "both") && spec.lowerThird?.lines.length) {
+    rects.push(lowerThirdCoverRect(width, height));
+  }
+  return rects;
+}
+
+/** Blur radius strong enough to kill burned-in titles, clamped so ffmpeg boxblur fits the crop. */
+export function coverBlurRadius(frameWidth: number, frameHeight: number, rect: CoverRect): number {
+  const shortSide = Math.min(Math.max(frameWidth, 2), Math.max(frameHeight, 2));
+  const want = Math.max(10, Math.round(shortSide * 0.02));
+  const limit = Math.max(1, Math.floor(Math.min(rect.width, rect.height) / 4));
+  return Math.max(1, Math.min(24, want, limit));
 }
 
 export function overlayHoldInstruction(spec?: TextOverlaySpec | null): string {
@@ -358,7 +469,11 @@ export function overlaySvgMarkup(
     );
     lines.forEach((line, i) => {
       const weight = i === 0 ? 700 : 400;
-      const size = fitFontSize(line, boxW * 0.9, i === 0 ? Math.round(h * 0.042) : Math.round(h * 0.028));
+      const size = fitFontSize(
+        line,
+        boxW * 0.9,
+        i === 0 ? Math.round(h * 0.042) : Math.round(h * 0.028),
+      );
       const y = boxY + Math.round(h * 0.04) + i * lineH;
       parts.push(
         `<text x="${Math.round(w / 2)}" y="${y}" text-anchor="middle" font-family="MYAOverlay, Inter, 'Noto Sans', sans-serif" font-weight="${weight}" font-size="${size}" fill="#ffffff">${xmlEscape(line)}</text>`,
@@ -378,7 +493,11 @@ export function overlaySvgMarkup(
       `<rect x="${boxX}" y="${boxY}" width="${Math.round(w * 0.012)}" height="${boxH}" fill="#f4d35e"/>`,
     );
     lines.forEach((line, i) => {
-      const size = fitFontSize(line, boxW * 0.88, i === 0 ? Math.round(h * 0.032) : Math.round(h * 0.022));
+      const size = fitFontSize(
+        line,
+        boxW * 0.88,
+        i === 0 ? Math.round(h * 0.032) : Math.round(h * 0.022),
+      );
       const y = boxY + Math.round(h * 0.032) + i * lineH;
       parts.push(
         `<text x="${boxX + Math.round(w * 0.03)}" y="${y}" text-anchor="start" font-family="MYAOverlay, Inter, 'Noto Sans', sans-serif" font-weight="${i === 0 ? 700 : 400}" font-size="${size}" fill="#ffffff">${xmlEscape(line)}</text>`,

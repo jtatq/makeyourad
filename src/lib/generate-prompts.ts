@@ -3,6 +3,7 @@
 import { TONE_PACKS } from "./prompts/tones.ts";
 import type { Tone } from "./products.ts";
 import {
+  directionShownToModel,
   endCardTypeInstruction,
   motionScriptInstruction,
   onScreenMode,
@@ -10,7 +11,12 @@ import {
   spokenScriptInstruction,
   stillEndCardTypeInstruction,
 } from "./generate-direction.ts";
-import { videoDirectionForModel, type TextOverlaySpec } from "./text-overlay.ts";
+import {
+  hasTextOverlay,
+  promptRoleForOverlay,
+  videoDirectionForModel,
+  type TextOverlaySpec,
+} from "./text-overlay.ts";
 import {
   applyVideoDirection,
   pictureContinuityInstruction,
@@ -104,7 +110,10 @@ const STATE_FULL_NAME: Record<string, string> = {
 function spokenPlace(city: string, state: string): string {
   const raw = state.trim();
   const code = raw.toUpperCase().replace(/\./g, "");
-  const named = STATE_FULL_NAME[code] || Object.values(STATE_FULL_NAME).find((n) => n.toLowerCase() === raw.toLowerCase()) || raw;
+  const named =
+    STATE_FULL_NAME[code] ||
+    Object.values(STATE_FULL_NAME).find((n) => n.toLowerCase() === raw.toLowerCase()) ||
+    raw;
   const c = city.trim();
   if (c && named) return `${c}, ${named}`;
   return c || named;
@@ -137,7 +146,9 @@ export function continuityLine(
     endType,
     onScreenTypeGuard(i.phone, overlay),
     "Never speak the ad length. Never say twelve seconds, twenty seconds, or forty seconds.",
-    dir ? `DIRECTION CHANGE (this overrides the previous take): ${dir}` : "",
+    dir
+      ? `DIRECTION CHANGE (this overrides the previous take): ${directionShownToModel(dir, overlay)}`
+      : "",
     "This is the customer-facing ad. Do not mention geofences, grocery or retail anchors, household income, age ranges, pilates studios, golf communities, or any media-buy targeting.",
   ]
     .filter(Boolean)
@@ -161,7 +172,7 @@ export function stillPrompt(
   const lines = [
     `Photoreal local-business advertisement still, ${ratio}, cinematic, natural light.`,
     `Business: ${i.businessName}, ${i.category_label} in ${spokenPlace(i.city, i.state)}.`,
-    `Slot: ${slot.label}. ${slot.role}`,
+    `Slot: ${slot.label}. ${promptRoleForOverlay(slot.role, overlay)}`,
     `Tone: ${i.tone}. ${packet.recipe.structure}`,
     script && slot.id !== "hook" && !slot.id.startsWith("body")
       ? `EXACT SCRIPT (speak these words, do not paraphrase): ${script}`
@@ -199,7 +210,7 @@ export function stillPrompt(
     lines.push(
       "Do not invent vehicles, pool shapes, buildings, or lettering that are not in the reference photos. If no van is in the photos, do not add a branded service van.",
     );
-    if (script) lines.push(spokenScriptInstruction(script, mode));
+    if (script) lines.push(spokenScriptInstruction(script, mode, overlay));
   }
   if (slot.id === "mascot" && i.mascotDescription) lines.push(`Mascot: ${i.mascotDescription}`);
   return applyVideoDirection(lines.filter(Boolean).join("\n"), "still", visual);
@@ -214,7 +225,10 @@ export function composeStillPrompt(
   videoDirection?: string,
   overlay?: TextOverlaySpec,
 ): string {
-  return [stillPrompt(packet, slot, ratio, direction, videoDirection, overlay), continuityLine(packet, direction, videoDirection, overlay)]
+  return [
+    stillPrompt(packet, slot, ratio, direction, videoDirection, overlay),
+    continuityLine(packet, direction, videoDirection, overlay),
+  ]
     .filter(Boolean)
     .join(" ");
 }
@@ -246,11 +260,13 @@ export function motionPrompt(
         ]
           .filter(Boolean)
           .join(" ")
-      : "Slow, confident camera. Keep type readable if present.";
+      : hasTextOverlay(overlay)
+        ? "Slow, confident camera. Blank plate — no words, letters, logos, or URLs."
+        : "Slow, confident camera. Keep type readable if present.";
   return applyVideoDirection(
     [
       `Animate this advertisement frame. Clip length for editing is ${seconds} seconds — that is timing only. Do not speak the length.`,
-      slot.role,
+      promptRoleForOverlay(slot.role, overlay),
       `Tone: ${tone}. ${talking}`,
       `Photoreal, no morphing logos, no extra text, no watermarks.`,
       `Never say twelve seconds, twenty seconds, forty seconds, or any runtime. Hard cut when the line is done.`,
@@ -277,7 +293,7 @@ export function imagineStillPrompt(
   const script = packet.script.trim();
   const parts = [
     `A photoreal ${ratio} advertisement still for ${i.businessName}, a ${i.category_label} in ${spokenPlace(i.city, i.state)}.`,
-    `This frame is the ${slot.label.toLowerCase()}: ${slot.role}`,
+    `This frame is the ${slot.label.toLowerCase()}: ${promptRoleForOverlay(slot.role, overlay)}`,
     `The look is ${i.tone}: ${tone.picture}`,
   ];
   if (script && slot.id !== "hook") {
@@ -306,17 +322,25 @@ export function imagineStillPrompt(
         "Talking-head still: owner or tech from the reference photos, facing camera, mid-speech, at the real job site from those photos. Match face and clothing exactly.",
       );
     }
-    parts.push("Do not invent a branded van, a different pool shape, or lettering that is not in the photos.");
-    if (script) parts.push(spokenScriptInstruction(script, mode));
+    parts.push(
+      "Do not invent a branded van, a different pool shape, or lettering that is not in the photos.",
+    );
+    if (script) parts.push(spokenScriptInstruction(script, mode, overlay));
   }
   if (slot.id === "mascot" && i.mascotDescription) parts.push(`Mascot: ${i.mascotDescription}`);
-  const refs = referencePromptBlock(packet.assets.filter((a) => a.kind === "logo" || a.kind === "upload"));
+  const refs = referencePromptBlock(
+    packet.assets.filter((a) => a.kind === "logo" || a.kind === "upload"),
+  );
   if (refs) parts.push(refs);
   parts.push("Use the real business. No celebrity, no watermark, no UI chrome, no agency slogan.");
   parts.push(
     "Do not mention geofences, grocery or retail anchors, household income, age ranges, pilates studios, golf communities, or any media-buy targeting.",
   );
-  return applyVideoDirection(parts.filter(Boolean).join(" "), "still", videoDirectionForModel(videoDirection, overlay));
+  return applyVideoDirection(
+    parts.filter(Boolean).join(" "),
+    "still",
+    videoDirectionForModel(videoDirection, overlay),
+  );
 }
 
 export function imagineMotionPrompt(
@@ -346,11 +370,13 @@ export function imagineMotionPrompt(
         ]
           .filter(Boolean)
           .join(" ")
-      : "Slow, confident camera, subject stays recognizable, type stays readable.";
+      : hasTextOverlay(overlay)
+        ? "Slow, confident camera, subject stays recognizable. Blank plate — no words, letters, logos, or URLs."
+        : "Slow, confident camera, subject stays recognizable, type stays readable.";
   return applyVideoDirection(
     [
       `Animate this advertisement frame. Clip length for editing is ${seconds} seconds — that is timing only. Do not speak the length.`,
-      slot.role,
+      promptRoleForOverlay(slot.role, overlay),
       pack.picture,
       talking,
       "Photoreal, no morphing logos, no extra text, no watermarks.",
@@ -412,5 +438,7 @@ export function composeMotionPrompt(
           videoDirection,
           overlay,
         );
-  return [motion, continuityLine(packet, direction, videoDirection, overlay)].filter(Boolean).join(" ");
+  return [motion, continuityLine(packet, direction, videoDirection, overlay)]
+    .filter(Boolean)
+    .join(" ");
 }

@@ -21,7 +21,10 @@ describe("on-screen text direction", () => {
   });
 
   it("switches to name + city only when direction asks for minimal / end-card text", () => {
-    assert.equal(onScreenMode("Minimal on-screen text — business name and city only."), "minimal-endcard");
+    assert.equal(
+      onScreenMode("Minimal on-screen text — business name and city only."),
+      "minimal-endcard",
+    );
     assert.equal(onScreenMode("End-card text only. Keep the spoken VO."), "minimal-endcard");
     assert.equal(onScreenMode("Don't burn the script on screen."), "minimal-endcard");
     assert.equal(onScreenMode("No captions. Spoken VO only."), "minimal-endcard");
@@ -84,10 +87,22 @@ describe("on-screen text direction", () => {
       },
       { endCard: { lines: ["Knoxville Chamber", "KnoxvilleChamber.com"] }, lowerThird: null },
     );
-    assert.match(composited, /clean plate for composited type/);
+    assert.match(composited, /blank plate, no words or letters/);
     assert.doesNotMatch(composited, /865-555-0100/);
     assert.doesNotMatch(composited, /Knoxville Chamber\. Knoxville/);
-    assert.ok(composited.length < 80, `end-card overlay line should stay short: ${composited.length}`);
+    assert.ok(
+      composited.length < 80,
+      `end-card overlay line should stay short: ${composited.length}`,
+    );
+
+    const spokenOverlay = spokenScriptInstruction(script, "minimal-endcard", {
+      endCard: { lines: ["Knoxville Chamber"] },
+      lowerThird: null,
+    });
+    assert.match(spokenOverlay, /SPEAK this script verbatim/);
+    assert.match(spokenOverlay, /I'm Alan/);
+    assert.doesNotMatch(spokenOverlay, /business name and city only/);
+    assert.doesNotMatch(spokenOverlay, /No invented phones/);
   });
 
   it("uses one short guard for invented phones, and never letters a phone on overlay plates", () => {
@@ -101,7 +116,13 @@ describe("on-screen text direction", () => {
       endCard: { lines: ["Knoxville Chamber"] },
       lowerThird: null,
     });
-    assert.equal(overlay, noInventedOnScreenTypeInstruction("865-555-0100", { endCard: { lines: ["Knoxville Chamber"] }, lowerThird: null }));
+    assert.equal(
+      overlay,
+      noInventedOnScreenTypeInstruction("865-555-0100", {
+        endCard: { lines: ["Knoxville Chamber"] },
+        lowerThird: null,
+      }),
+    );
     assert.match(overlay, /Clean plate/);
     assert.match(overlay, /composited after generation/);
     assert.match(overlay, /phones/);
@@ -129,7 +150,7 @@ describe("on-screen text direction", () => {
       },
       { endCard: { lines: ["Knoxville Chamber", "KnoxvilleChamber.com"] }, lowerThird: null },
     );
-    assert.match(overlay, /Clean plate for composited end-card/);
+    assert.match(overlay, /Blank plate, no on-screen type/);
     assert.doesNotMatch(overlay, /865-555-0100/);
     assert.doesNotMatch(overlay, /Join us/);
 

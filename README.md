@@ -159,8 +159,8 @@ AI-drawn letters are unreliable for brand copy (`Knowillo` / `Knoxvillo` instead
 Design:
 
 1. Parse exact lines from `endCard` / `lowerThird` (aliases: `end_card`, `lower_third`, `lowerThirds`) **or** from `[END CARD:]` / `[LOWER THIRD:]` / `End card:` / `Lower third:` in the brief or `videoDirection`.
-2. Spoken VO is unchanged. The generative prompt is told **not** to letter those words — leave a clean plate.
-3. After the still (end-card / static slots) and after the video take, Sharp / ffmpeg burn the same SVG type. Lower third is timed mid-spot; end card holds the last ~3 seconds. Audio is copied, not rewritten.
+2. Spoken VO is unchanged. The model is not asked to super the business name, city, phone, or CTA. End-card and lower-third beats are a blank plate.
+3. Before Sharp / ffmpeg burn the SVG type, the end-card region (last ~3 seconds, lower half of the frame) and the lower-third band are blurred and darkened so any model-burned letters are illegible. Only the composited type stays readable. Lower third is timed mid-spot; the end card holds the last ~3 seconds. Audio is copied, not rewritten.
 4. Remake / cancel / reference photos / second-pass `videoDirection` behave as before. Overlay spec is stored on the job and re-parsed on remake.
 
 ```bash
