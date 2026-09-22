@@ -8,6 +8,7 @@ import {
 import { safeFilename, safeMime } from "./filename";
 import { makeId } from "./ids";
 import { asIso, asNumber, parseJsonArray, parseJsonObject } from "./json";
+import { publicAssetUrl } from "./durable-video";
 import { estimateJobCost } from "./xai-cost";
 import {
   requestOrigin,
@@ -766,7 +767,15 @@ export async function deliverOrder(id: string, origin: string, actor = "operator
   if (deliveries.length === 0) throw new Error("No delivery files attached");
   const links = deliveries.map((a) => ({
     filename: a.filename,
-    url: a.external_url || signedFileUrl(origin, a.id, 30),
+    url:
+      publicAssetUrl({
+        origin,
+        assetId: a.id,
+        mime: a.mime,
+        hasData: Boolean(a.data_url),
+        externalUrl: a.external_url,
+        days: 30,
+      }) || signedFileUrl(origin, a.id, 30),
   }));
   await sendDeliveryEmail({
     to: order.email,

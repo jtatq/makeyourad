@@ -43,9 +43,9 @@ import {
   previewAdminOpen,
   readOperatorCookie,
   requestOrigin,
-  signedFileUrl,
   tokenMatches,
 } from "./operator-auth.server";
+import { presentGeneration, publicAssetUrl, publicExternalUrl } from "./durable-video";
 import { env, isWorkspacePreview } from "./env.server";
 import { GROK_BOT_PROFILE, GROK_INTAKE_PROFILE, nextFloorWork, runBotTick } from "./floor.server";
 import { apiLimitSnapshot } from "./xai-limits.server";
@@ -131,22 +131,23 @@ export const adminOrder = createServerFn({ method: "GET" })
     return {
       order,
       events,
-      generation,
+      generation: generation ? presentGeneration(generation, assets, origin) : generation,
       assets: assets.map((a) => ({
         id: a.id,
         kind: a.kind,
         filename: a.filename,
         mime: a.mime,
         hasData: Boolean(a.data_url),
-        external_url: a.external_url,
-        preview_url:
-          a.external_url && /^https?:\/\//.test(a.external_url)
-            ? a.external_url
-            : a.data_url && a.data_url.startsWith("data:") && a.data_url.length < 1_500_000
-              ? a.data_url
-              : a.mime.startsWith("image/") || a.mime.startsWith("video/")
-                ? signedFileUrl(origin, a.id, 1)
-                : null,
+        external_url: publicExternalUrl(a.external_url, Boolean(a.data_url)),
+        preview_url: publicAssetUrl({
+          origin,
+          assetId: a.id,
+          mime: a.mime,
+          hasData: Boolean(a.data_url),
+          externalUrl: a.external_url,
+          inlineDataUrl: a.data_url,
+          days: 1,
+        }),
       })),
       packet,
     };

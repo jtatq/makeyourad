@@ -1,4 +1,5 @@
 import { inspectClip } from "./auto-qc.server";
+import { isEphemeralGeneratorUrl, presentGeneration } from "./durable-video";
 import { env } from "./env.server";
 import {
   applyFloorDecision,
@@ -18,6 +19,7 @@ import {
   claimOrder,
   createOrdersFromProfile,
   getOrder,
+  listAssets,
   listOrders,
   listReferenceAssets,
   mergeOrderVideoDirection,
@@ -96,6 +98,12 @@ export async function nextFloorWork(): Promise<BotWork | null> {
     const slot = job?.slots[0] ?? null;
     if (order.status === "delivered") continue;
     if (job?.status === "cancelled") continue;
+    let masterUrl = job?.masterUrl ?? slot?.videoUrl ?? null;
+    if (job && masterUrl && (isEphemeralGeneratorUrl(masterUrl) || masterUrl.startsWith("data:video/"))) {
+      const assets = await listAssets({ orderId: order.id });
+      const shown = presentGeneration(job, assets, publicOrigin());
+      masterUrl = shown.masterUrl ?? shown.slots[0]?.videoUrl ?? null;
+    }
     return {
       orderId: order.id,
       businessName: order.business_name,
@@ -103,7 +111,7 @@ export async function nextFloorWork(): Promise<BotWork | null> {
       status: order.status,
       jobStatus: job?.status ?? null,
       floor: job?.floor ?? null,
-      masterUrl: job?.masterUrl ?? slot?.videoUrl ?? null,
+      masterUrl,
       slot: slot
         ? {
             id: slot.id,
@@ -281,6 +289,11 @@ export async function summarizeJob(
   const slot = loaded?.slots[0] ?? null;
   const cost = loaded ? estimateJobCost(loaded) : { totalCents: 0, stills: 0, videos: 0 };
   const origin = publicOrigin();
+  const rawVideo = slot?.videoUrl ?? loaded?.masterUrl ?? null;
+  const shown =
+    loaded && rawVideo && (isEphemeralGeneratorUrl(rawVideo) || rawVideo.startsWith("data:video/"))
+      ? presentGeneration(loaded, await listAssets({ orderId: order.id }), origin)
+      : loaded;
   const progress = jobProgress(loaded);
   const references = (await listReferenceAssets(order.id)).map((a) => ({
     id: a.id,
@@ -313,7 +326,7 @@ export async function summarizeJob(
       ? { id: slot.id, label: slot.label, status: slot.status, qc: slot.qc ?? null }
       : null,
     stillUrl: slot?.stillUrl ?? null,
-    videoUrl: slot?.videoUrl ?? loaded?.masterUrl ?? null,
+    videoUrl: shown?.slots[0]?.videoUrl ?? shown?.masterUrl ?? null,
     videoDirection: loaded?.videoDirection || resolveVideoDirection({ brief: order.brief }) || null,
     endCard: overlay.endCard?.lines ?? null,
     lowerThird: overlay.lowerThird?.lines ?? null,

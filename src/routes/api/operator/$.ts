@@ -41,6 +41,7 @@ import {
   summarizeJob,
   cancelJob,
 } from "@/lib/floor.server";
+import { publicAssetUrl, publicExternalUrl } from "@/lib/durable-video";
 import { collectReferencesFromBody, readOperatorJobRequest } from "@/lib/operator-refs";
 import { specFromFields } from "@/lib/text-overlay";
 
@@ -208,6 +209,7 @@ async function handle(request: Request, splat: string, method: "GET" | "POST") {
           listEvents(order.id),
           listAssets({ orderId: order.id }),
         ]);
+        const origin = requestOrigin(request);
         return Response.json({
           order,
           events,
@@ -217,7 +219,16 @@ async function handle(request: Request, splat: string, method: "GET" | "POST") {
             filename: a.filename,
             mime: a.mime,
             hasData: Boolean(a.data_url),
-            external_url: a.external_url,
+            external_url: publicExternalUrl(a.external_url, Boolean(a.data_url)),
+            url: publicAssetUrl({
+              origin,
+              assetId: a.id,
+              mime: a.mime,
+              hasData: Boolean(a.data_url),
+              externalUrl: a.external_url,
+              inlineDataUrl: a.data_url,
+              days: 30,
+            }),
           })),
         });
       }
