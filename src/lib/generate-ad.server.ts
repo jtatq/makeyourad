@@ -51,6 +51,7 @@ import {
   rankReferenceAssets,
   referencePromptBlock,
 } from "./generate-refs";
+import { durableFileUrl, isEphemeralGeneratorUrl, planFinishedVideo } from "./durable-video";
 
 export type GenEngine = "imagine" | "xai";
 export type GenSlotStatus = "queued" | "still" | "video" | "done" | "error";
@@ -987,7 +988,7 @@ export async function assembleMaster(
     }
     const dataUrl = `data:video/mp4;base64,${buf.toString("base64")}`;
     const attached = await attachGen(orderId, stitch.filename, null, "video/mp4", "delivery", dataUrl);
-    job.masterUrl = assetViewUrl(origin, attached.id, dataUrl);
+    job.masterUrl = durableFileUrl(origin, attached.id);
     job.assembleRequested = false;
     await saveGeneration(orderId, job);
     await appendEvent(orderId, "generate", `Master stitched · ${stitch.durationSeconds}s.`, "admin");
@@ -1088,6 +1089,23 @@ function finishIfDone(job: GenerationJob) {
   }
 }
 
+const VIDEO_STORE_CAP = 48_000_000;
+
+async function fetchVideoDataUrl(url: string, mime: string): Promise<string> {
+  let res: Response;
+  try {
+    res = await fetch(url, { signal: AbortSignal.timeout(120_000) });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "download failed";
+    throw new Error(`Could not copy finished video (${message})`);
+  }
+  if (!res.ok) throw new Error(`Could not copy finished video (${res.status})`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length < 1) throw new Error("Finished video was empty");
+  if (buf.length > VIDEO_STORE_CAP) throw new Error("Finished video is too large to store");
+  return `data:${mime};base64,${buf.toString("base64")}`;
+}
+
 async function attachGen(
   orderId: string,
   filename: string,
@@ -1098,7 +1116,8 @@ async function attachGen(
 ): Promise<{ id: string }> {
   const id = makeId("ast");
   let dataUrl: string | null = providedDataUrl ?? null;
-  if (!dataUrl && url && (kind === "still" || mime.startsWith("image/"))) {
+  const isVideo = mime.startsWith("video/");
+  if (!dataUrl && url && !isVideo && (kind === "still" || mime.startsWith("image/"))) {
     try {
       const res = await fetch(url);
       if (res.ok) {
@@ -1111,11 +1130,20 @@ async function attachGen(
       dataUrl = null;
     }
   }
+  if (isVideo && !dataUrl) {
+    if (!url) throw new Error("Finished video could not be copied into storage");
+    dataUrl = url.startsWith("data:") ? url : await fetchVideoDataUrl(url, mime);
+  }
+  if (isVideo && !dataUrl?.startsWith("data:")) {
+    throw new Error("Finished video could not be copied into storage");
+  }
+  // Ephemeral generator links stay on the asset row for debugging. Public URLs use the copied bytes.
+  const externalUrl = isVideo ? (url && isEphemeralGeneratorUrl(url) ? url : null) : url;
   const sql = await getSql();
   await sql.query(
     `insert into order_assets (id, order_id, kind, filename, mime, data_url, external_url)
      values ($1,$2,$3,$4,$5,$6,$7)`,
-    [id, orderId, kind, filename, mime, dataUrl, url],
+    [id, orderId, kind, filename, mime, dataUrl, externalUrl],
   );
   return { id };
 }
@@ -1264,8 +1292,9 @@ export async function completeImagineSlot(opts: {
     const filename =
       opts.filename.replace(/[^\w.\-]+/g, "-").slice(0, 120) ||
       `${slug}-${PRODUCTS[order.product].durationSeconds ?? 20}s.mp4`;
-    const attached = await attachGen(opts.orderId, filename, opts.url ?? null, mime, "delivery", opts.dataUrl);
-    job.masterUrl = assetViewUrl(opts.origin, attached.id, opts.dataUrl);
+    const videoMime = mime.startsWith("video/") ? mime : "video/mp4";
+    const attached = await attachGen(opts.orderId, filename, opts.url ?? null, videoMime, "delivery", opts.dataUrl);
+    job.masterUrl = durableFileUrl(opts.origin, attached.id);
     job.updatedAt = new Date().toISOString();
     await appendEvent(
       opts.orderId,
@@ -1338,15 +1367,22 @@ export async function completeImagineSlot(opts: {
           url: sourceUrl,
         })
       : { url: sourceUrl, dataUrl: opts.dataUrl, applied: false };
+    const plan = planFinishedVideo({
+      generatorUrl: opts.url,
+      overlaidApplied: overlaid.applied,
+      overlaidDataUrl: overlaid.dataUrl,
+      providedDataUrl: opts.dataUrl,
+    });
+    const videoMime = mime.startsWith("video/") ? mime : "video/mp4";
     const attached = await attachGen(
       opts.orderId,
       outName,
-      overlaid.applied ? null : opts.url ?? null,
-      mime,
+      plan.fetchUrl ?? (opts.url && isEphemeralGeneratorUrl(opts.url) ? opts.url : null),
+      videoMime,
       "delivery",
-      overlaid.dataUrl ?? opts.dataUrl,
+      plan.dataUrl ?? undefined,
     );
-    slot.videoUrl = assetViewUrl(opts.origin, attached.id, overlaid.dataUrl ?? opts.dataUrl);
+    slot.videoUrl = durableFileUrl(opts.origin, attached.id);
     trackAsset(slot, attached.id);
     slot.status = "done";
     slot.claimedAt = undefined;
@@ -1613,17 +1649,22 @@ async function tickGenerationLocked(
             kind: "video",
             url: last.url,
           });
-          slot.videoUrl = overlaidVideo.url;
-          slot.status = "done";
+          const plan = planFinishedVideo({
+            generatorUrl: last.url,
+            overlaidApplied: overlaidVideo.applied,
+            overlaidDataUrl: overlaidVideo.dataUrl,
+          });
           const vidAst = await attachGen(
             orderId,
             `${slot.id}-gen.mp4`,
-            overlaidVideo.applied ? null : last.url,
+            plan.fetchUrl ?? last.url,
             "video/mp4",
             "delivery",
-            overlaidVideo.dataUrl,
+            plan.dataUrl ?? undefined,
           );
-          if (overlaidVideo.applied) slot.videoUrl = assetViewUrl(origin, vidAst.id, overlaidVideo.dataUrl);
+          slot.videoUrl = durableFileUrl(origin, vidAst.id);
+          if (slot.id === "mascot") job.mascotUrl = slot.videoUrl;
+          slot.status = "done";
           trackAsset(slot, vidAst.id);
           await appendEvent(orderId, "generate", `Clip ready · ${slot.label}.`, "grok");
           await qcAndFloor(order, job, slot);

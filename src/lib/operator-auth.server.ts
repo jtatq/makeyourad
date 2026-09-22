@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { env, isWorkspacePreview } from "./env.server";
+import { env, isWorkspacePreview } from "./env.server.ts";
 
 const COOKIE = "mya_operator";
 
